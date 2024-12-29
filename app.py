@@ -25,6 +25,15 @@ import bcrypt
 app = Flask(__name__)
 app.config.from_object(Config)
 
+# Database configuration
+if os.environ.get('VERCEL_ENV') == 'production':
+    DATABASE_URL = os.environ.get('DATABASE_URL', '').replace('postgres://', 'postgresql://')
+    app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
+else:
+    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///tracker.db'
+
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
 db = SQLAlchemy(app)
 login_manager = LoginManager()
 login_manager.init_app(app)
