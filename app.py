@@ -1,3 +1,4 @@
+import random
 # Test update - checking GitHub sync
 import os
 import logging
