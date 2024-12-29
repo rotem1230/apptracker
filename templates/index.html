@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+
+{% block title %}מערכת מעקב ילדים{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="text-center mb-5">
+        <h1 class="display-4 mb-3">ברוכים הבאים למערכת מעקב ילדים</h1>
+        <p class="lead">מערכת בטוחה ופשוטה למעקב אחר מיקום ילדיכם</p>
+    </div>
+
+    <!-- כרטיסיית אבטחה -->
+    <div class="card mb-5 border-0 shadow-sm">
+        <div class="card-body bg-light rounded">
+            <div class="row align-items-center">
+                <div class="col-auto">
+                    <div class="bg-primary bg-gradient p-3 rounded-circle">
+                        <i class="bi bi-shield-lock-fill text-white" style="font-size: 2rem;"></i>
+                    </div>
+                </div>
+                <div class="col">
+                    <h5 class="card-title mb-1">אבטחה מתקדמת - הצפנה מקצה לקצה</h5>
+                    <p class="card-text text-muted mb-0">
+                        כל הנתונים והמיקומים מוצפנים באופן מלא ומאובטחים בטכנולוגיית הצפנה מתקדמת.
+                        אפילו לאפליקציה עצמה אין גישה לנתונים הגולמיים - רק אתם יכולים לצפות במידע.
+                    </p>
+                </div>
+                <div class="col-auto d-none d-lg-block">
+                    <i class="bi bi-shield-check text-primary" style="font-size: 3rem; opacity: 0.1;"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row justify-content-center">
+        <div class="col-md-4">
+            <div class="card mb-4 border-0 shadow-sm text-center">
+                <div class="card-body">
+                    <i class="bi bi-bell-fill text-primary mb-3" style="font-size: 2rem;"></i>
+                    <h3 class="card-title">התראות חכמות</h3>
+                    <p class="card-text">קבלת התראות כשהילדים מגיעים לאזורים מוגדרים</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card mb-4 border-0 shadow-sm text-center">
+                <div class="card-body">
+                    <i class="bi bi-geo-alt-fill text-primary mb-3" style="font-size: 2rem;"></i>
+                    <h3 class="card-title">מעקב בזמן אמת</h3>
+                    <p class="card-text">צפייה במיקום הילדים בזמן אמת</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card mb-4 border-0 shadow-sm text-center">
+                <div class="card-body">
+                    <i class="bi bi-shield-fill-check text-primary mb-3" style="font-size: 2rem;"></i>
+                    <h3 class="card-title">בטיחות מירבית</h3>
+                    <p class="card-text">מעקב בטוח ואמין אחר מיקום ילדיכם</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% if not current_user.is_authenticated %}
+    <div class="text-center mt-4">
+        <a href="{{ url_for('register') }}" class="btn btn-primary btn-lg me-2">הרשמה</a>
+        <a href="{{ url_for('login') }}" class="btn btn-outline-primary btn-lg">התחברות</a>
+    </div>
+    {% else %}
+    <div class="text-center mt-4">
+        <a href="{{ url_for('dashboard') }}" class="btn btn-primary btn-lg">לוח בקרה</a>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

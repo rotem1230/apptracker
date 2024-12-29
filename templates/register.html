@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+
+{% block title %}הרשמה{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row justify-content-center">
+        <div class="col-md-6">
+            <!-- כרטיסיית אבטחה -->
+            <div class="card mb-4 border-0 shadow-sm">
+                <div class="card-body bg-light rounded">
+                    <div class="row align-items-center">
+                        <div class="col-auto">
+                            <div class="bg-primary bg-gradient p-3 rounded-circle">
+                                <i class="bi bi-shield-lock-fill text-white" style="font-size: 2rem;"></i>
+                            </div>
+                        </div>
+                        <div class="col">
+                            <h5 class="card-title mb-1">אבטחה מתקדמת - הצפנה מקצה לקצה</h5>
+                            <p class="card-text text-muted mb-0">
+                                כל הנתונים והמיקומים מוצפנים באופן מלא ומאובטחים בטכנולוגיית הצפנה מתקדמת.
+                                אפילו לאפליקציה עצמה אין גישה לנתונים הגולמיים - רק אתם יכולים לצפות במידע.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h2 class="card-title text-center mb-4">הרשמה</h2>
+                    {% with messages = get_flashed_messages(with_categories=true) %}
+                        {% if messages %}
+                            {% for category, message in messages %}
+                                <div class="alert alert-{{ 'success' if category == 'success' else 'danger' }} alert-dismissible fade show" role="alert">
+                                    {{ message }}
+                                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                                </div>
+                            {% endfor %}
+                        {% endif %}
+                    {% endwith %}
+                    <form method="POST">
+                        <div class="mb-3">
+                            <label for="username" class="form-label">שם משתמש</label>
+                            <input type="text" class="form-control" id="username" name="username" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="password" class="form-label">סיסמה</label>
+                            <input type="password" class="form-control" id="password" name="password" required>
+                            <div class="form-text text-muted mt-2">
+                                <div class="bg-light p-3 rounded">
+                                    <h6 class="mb-2">דרישות הסיסמה:</h6>
+                                    <ul class="mb-0">
+                                        <li>לפחות 8 תווים</li>
+                                        <li>לפחות אות גדולה אחת באנגלית</li>
+                                        <li>לפחות תו מיוחד אחד (!@#$%^&*)</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="confirm_password" class="form-label">אימות סיסמה</label>
+                            <input type="password" class="form-control" id="confirm_password" name="confirm_password" required>
+                        </div>
+                        <div class="d-grid">
+                            <button type="submit" class="btn btn-primary">הרשמה</button>
+                        </div>
+                    </form>
+                    <div class="text-center mt-3">
+                        <p>כבר יש לך חשבון? <a href="{{ url_for('login') }}">התחבר כאן</a></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

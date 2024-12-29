@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>מעקב מיקום - {{ child.name }}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        }
+        .container {
+            max-width: 600px;
+            margin: 50px auto;
+            text-align: center;
+        }
+        .status-box {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .status-text {
+            font-size: 1.2em;
+            margin: 10px 0;
+        }
+        .btn-start {
+            background-color: #0d6efd;
+            color: white;
+            padding: 15px 30px;
+            border-radius: 25px;
+            border: none;
+            font-size: 1.1em;
+            margin-top: 20px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        .btn-start:hover {
+            background-color: #0b5ed7;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-4">
+        <div class="card">
+            <div class="card-body text-center">
+                <h2>מכשיר: {{ child.name }}</h2>
+                <div id="status" class="alert alert-info">מצב: לא משתף מיקום</div>
+                <button id="shareLocation" class="btn btn-primary btn-lg">התחל לשתף מיקום</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let isSharing = false;
+        let watchId = null;
+        const baseUrl = "https://rotem121.pythonanywhere.com";  
+
+        document.getElementById('shareLocation').addEventListener('click', function() {
+            if (!isSharing) {
+                startSharing();
+            } else {
+                stopSharing();
+            }
+        });
+
+        function startSharing() {
+            if ("geolocation" in navigator) {
+                const statusDiv = document.getElementById('status');
+                const button = document.getElementById('shareLocation');
+                
+                watchId = navigator.geolocation.watchPosition(
+                    function(position) {
+                        const data = {
+                            device_id: "{{ child.device_id }}",
+                            latitude: position.coords.latitude,
+                            longitude: position.coords.longitude
+                        };
+                        
+                        fetch(`${baseUrl}/update_location`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify(data)
+                        })
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.status === 'success') {
+                                statusDiv.className = 'alert alert-success';
+                                statusDiv.textContent = 'מצב: משתף מיקום';
+                                button.textContent = 'הפסק לשתף מיקום';
+                                button.className = 'btn btn-danger btn-lg';
+                                isSharing = true;
+                            } else {
+                                throw new Error(data.message || 'שגיאה בעדכון המיקום');
+                            }
+                        })
+                        .catch(error => {
+                            console.error('Error:', error);
+                            statusDiv.className = 'alert alert-danger';
+                            statusDiv.textContent = 'שגיאה בשיתוף המיקום: ' + error.message;
+                        });
+                    },
+                    function(error) {
+                        const statusDiv = document.getElementById('status');
+                        statusDiv.className = 'alert alert-danger';
+                        
+                        switch(error.code) {
+                            case error.PERMISSION_DENIED:
+                                statusDiv.textContent = "המשתמש לא אישר גישה למיקום";
+                                break;
+                            case error.POSITION_UNAVAILABLE:
+                                statusDiv.textContent = "מידע המיקום אינו זמין";
+                                break;
+                            case error.TIMEOUT:
+                                statusDiv.textContent = "פג הזמן לקבלת מיקום";
+                                break;
+                            default:
+                                statusDiv.textContent = "שגיאה לא ידועה בקבלת המיקום";
+                        }
+                    },
+                    {
+                        enableHighAccuracy: true,
+                        timeout: 5000,
+                        maximumAge: 0
+                    }
+                );
+            } else {
+                alert("הדפדפן שלך לא תומך בשיתוף מיקום");
+            }
+        }
+
+        function stopSharing() {
+            if (watchId !== null) {
+                navigator.geolocation.clearWatch(watchId);
+                watchId = null;
+            }
+            
+            const statusDiv = document.getElementById('status');
+            const button = document.getElementById('shareLocation');
+            
+            statusDiv.className = 'alert alert-info';
+            statusDiv.textContent = 'מצב: לא משתף מיקום';
+            button.textContent = 'התחל לשתף מיקום';
+            button.className = 'btn btn-primary btn-lg';
+            isSharing = false;
+        }
+    </script>
+</body>
+</html>
