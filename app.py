@@ -340,6 +340,7 @@ def get_locations():
                     'child_name': child.name,
                     'latitude': child.last_latitude,
                     'longitude': child.last_longitude,
+                    'address': child.last_address,
                     'last_update': child.last_update.isoformat() if child.last_update else None
                 })
         return jsonify(locations)

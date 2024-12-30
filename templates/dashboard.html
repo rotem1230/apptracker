@@ -177,6 +177,7 @@ window.gm_authFailure = function() {
 let map;
 let markers = {};
 let circles = {};
+let infoWindows = {};
 
 // פונקציה להתמקדות במיקום של ילד
 function focusOnChild(childId) {
@@ -185,28 +186,6 @@ function focusOnChild(childId) {
         map.setCenter(marker.getPosition());
         map.setZoom(15);
     }
-}
-
-function initMap() {
-    // מיקום ברירת מחדל - ישראל
-    const defaultLocation = { lat: 31.7683, lng: 35.2137 };
-    
-    map = new google.maps.Map(document.getElementById('map'), {
-        zoom: 8,
-        center: defaultLocation,
-        gestureHandling: 'greedy',
-        zoomControl: true,
-        mapTypeControl: true,
-        scaleControl: true,
-        streetViewControl: true,
-        rotateControl: true,
-        fullscreenControl: true
-    });
-
-    // התחל לעדכן מיקומים
-    updateLocations();
-    // עדכן מיקומים כל 30 שניות
-    setInterval(updateLocations, 30000);
 }
 
 async function updateLocations() {
@@ -224,11 +203,37 @@ async function updateLocations() {
                 // עדכן או צור סמן חדש
                 if (markers[child.child_id]) {  
                     markers[child.child_id].setPosition(position);
+                    // עדכן את חלון המידע
+                    if (infoWindows[child.child_id]) {
+                        infoWindows[child.child_id].close();
+                        infoWindows[child.child_id].setContent(
+                            `<div style="text-align: right; direction: rtl;">
+                                <h5>${child.child_name}</h5>
+                                <p>${child.address || 'כתובת לא זמינה'}</p>
+                            </div>`
+                        );
+                    }
                 } else {
                     markers[child.child_id] = new google.maps.Marker({
                         position: position,
                         map: map,
-                        title: child.child_name  
+                        title: child.child_name
+                    });
+
+                    // צור חלון מידע חדש
+                    infoWindows[child.child_id] = new google.maps.InfoWindow({
+                        content: `<div style="text-align: right; direction: rtl;">
+                            <h5>${child.child_name}</h5>
+                            <p>${child.address || 'כתובת לא זמינה'}</p>
+                        </div>`
+                    });
+
+                    // הוסף מאזין לחיצה לפתיחת חלון המידע
+                    markers[child.child_id].addListener('click', () => {
+                        // סגור את כל חלונות המידע האחרים
+                        Object.values(infoWindows).forEach(window => window.close());
+                        // פתח את חלון המידע הנוכחי
+                        infoWindows[child.child_id].open(map, markers[child.child_id]);
                     });
                 }
 
@@ -244,7 +249,28 @@ async function updateLocations() {
     }
 }
 
-function updateChildrenList() {
+function initMap() {
+    map = new google.maps.Map(document.getElementById('map'), {
+        center: { lat: 31.6746, lng: 34.5746 },  // מרכז אשקלון
+        zoom: 13,
+        mapTypeControl: true,
+        streetViewControl: true,
+        rotateControl: true,
+        fullscreenControl: true
+    });
+
+    // אתחל את המערכים
+    markers = {};
+    infoWindows = {};
+    circles = {};
+
+    // התחל לעדכן מיקומים
+    updateLocations();
+    // עדכן מיקומים כל 30 שניות
+    setInterval(updateLocations, 30000);
+}
+
+async function updateChildrenList() {
     fetch('/get_children')
         .then(response => response.json())
         .then(data => {
@@ -477,7 +503,7 @@ function showSafeZones(childId) {
                     content: `
                         <div>
                             <h6>${zone.name}</h6>
-                            <p>כתובת: ${zone.address || 'לא זמין'}</p>
+                            <p>כתובת: ${zone.address || 'לא זמינה'}</p>
                             <p>רדיוס: ${zone.radius} מטרים</p>
                         </div>
                     `
