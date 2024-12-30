@@ -178,6 +178,15 @@ let map;
 let markers = {};
 let circles = {};
 
+// פונקציה להתמקדות במיקום של ילד
+function focusOnChild(childId) {
+    const marker = markers[childId];
+    if (marker) {
+        map.setCenter(marker.getPosition());
+        map.setZoom(15);
+    }
+}
+
 function initMap() {
     // מיקום ברירת מחדל - ישראל
     const defaultLocation = { lat: 31.7683, lng: 35.2137 };
@@ -247,27 +256,25 @@ function updateChildrenList() {
                 const row = document.createElement('tr');
                 row.innerHTML = `
                     <td>${child.name}</td>
-                    <td data-child-id="${child.id}">
+                    <td>
                         ${child.last_latitude && child.last_longitude ? 
-                            `${child.last_latitude.toFixed(6)}, ${child.last_longitude.toFixed(6)}
-                            <button class="btn btn-sm btn-primary ms-2" onclick="focusOnChild(${child.id}, ${child.last_latitude}, ${child.last_longitude})">
-                                <i class="bi bi-geo-alt"></i> מקם במפה
-                            </button>
-                            <div id="address-${child.id}" class="small text-muted mt-1"></div>`
-                            : 'לא זמין'
+                            `<button class="btn btn-link" onclick="focusOnChild('${child.id}')">
+                                הצג על המפה
+                            </button>` : 
+                            'לא זמין'
                         }
                     </td>
                     <td>${lastUpdate}</td>
                     <td>
-                        <button class="btn btn-sm btn-success" onclick="addSafeZone(${child.id})">
-                            הוסף אזור
+                        <button class="btn btn-primary btn-sm" onclick="addSafeZone(${child.id})">
+                            הוסף אזור בטוח
                         </button>
-                        <button class="btn btn-sm btn-info" onclick="showSafeZones(${child.id})">
+                        <button class="btn btn-info btn-sm" onclick="showSafeZones(${child.id})">
                             הצג אזורים
                         </button>
                     </td>
                     <td>
-                        <button class="btn btn-sm btn-danger" onclick="deleteChild(${child.id})">
+                        <button class="btn btn-danger btn-sm" onclick="deleteChild(${child.id})">
                             מחק
                         </button>
                     </td>
@@ -275,7 +282,9 @@ function updateChildrenList() {
                 tbody.appendChild(row);
             });
         })
-        .catch(error => console.error('Error:', error));
+        .catch(error => {
+            console.error('Error:', error);
+        });
 }
 
 // טיפול בטופס יצירת QR
