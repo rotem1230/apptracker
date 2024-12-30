@@ -33,8 +33,11 @@ login_manager.init_app(app)
 
 # Create tables if needed
 with app.app_context():
-    if os.environ.get('CREATE_TABLES') == 'true':
+    try:
         db.create_all()
+        print("Tables created successfully!")
+    except Exception as e:
+        print(f"Error creating tables: {str(e)}")
 
 # הגדרת תיקיית QR
 QR_FOLDER = os.path.join(app.static_folder, 'qr_codes')
