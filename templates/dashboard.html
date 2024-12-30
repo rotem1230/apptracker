@@ -202,29 +202,29 @@ function initMap() {
 
 async function updateLocations() {
     try {
-        const response = await fetch('/get_children_locations');
+        const response = await fetch('/get_locations');  
         const children = await response.json();
         
         children.forEach(child => {
-            if (child.last_latitude && child.last_longitude) {
+            if (child.latitude && child.longitude) {  
                 const position = {
-                    lat: parseFloat(child.last_latitude),
-                    lng: parseFloat(child.last_longitude)
+                    lat: parseFloat(child.latitude),
+                    lng: parseFloat(child.longitude)
                 };
 
                 // עדכן או צור סמן חדש
-                if (markers[child.id]) {
-                    markers[child.id].setPosition(position);
+                if (markers[child.child_id]) {  
+                    markers[child.child_id].setPosition(position);
                 } else {
-                    markers[child.id] = new google.maps.Marker({
+                    markers[child.child_id] = new google.maps.Marker({
                         position: position,
                         map: map,
-                        title: child.name
+                        title: child.child_name  
                     });
                 }
 
                 // הצג את אזורי הבטיחות
-                showSafeZones(child.id);
+                showSafeZones(child.child_id);
             }
         });
 
