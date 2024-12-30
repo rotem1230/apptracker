@@ -253,12 +253,17 @@ function updateChildrenList() {
             
             data.forEach(child => {
                 const lastUpdate = child.last_update ? new Date(child.last_update).toLocaleString() : 'לא זמין';
+                const locationText = child.last_latitude && child.last_longitude ? 
+                    `${child.last_latitude.toFixed(6)}, ${child.last_longitude.toFixed(6)}` : 
+                    'לא זמין';
+                
                 const row = document.createElement('tr');
                 row.innerHTML = `
                     <td>${child.name}</td>
                     <td>
                         ${child.last_latitude && child.last_longitude ? 
-                            `<button class="btn btn-link" onclick="focusOnChild('${child.id}')">
+                            `<div>${locationText}</div>
+                            <button class="btn btn-link" onclick="focusOnChild('${child.id}')">
                                 הצג על המפה
                             </button>` : 
                             'לא זמין'

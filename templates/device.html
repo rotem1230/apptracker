@@ -56,7 +56,7 @@
     <script>
         let isSharing = false;
         let watchId = null;
-        const baseUrl = "https://rotem121.pythonanywhere.com";  
+        const baseUrl = window.location.origin;  
 
         document.getElementById('shareLocation').addEventListener('click', function() {
             if (!isSharing) {
