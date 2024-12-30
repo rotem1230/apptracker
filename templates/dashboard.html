@@ -413,11 +413,15 @@ function saveSafeZone() {
             })
             .then(response => response.json())
             .then(data => {
-                if (data.status === 'success') {
+                if (data.success) {  
                     bootstrap.Modal.getInstance(document.getElementById('safeZoneModal')).hide();
+                    // איפוס הטופס
+                    document.getElementById('zoneName').value = '';
+                    document.getElementById('zoneAddress').value = '';
+                    document.getElementById('zoneRadius').value = '100';
                     showSafeZones(childId);
                 } else {
-                    alert('שגיאה: ' + data.message);
+                    alert('שגיאה: ' + (data.message || data.error));
                 }
             })
             .catch(error => {
