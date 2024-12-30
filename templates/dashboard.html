@@ -47,7 +47,7 @@
             <div class="card">
                 <div class="card-body">
                     <h5 class="card-title">מפת מעקב</h5>
-                    <div id="map"></div>
+                    <div id="map" style="height: 400px;"></div>
                 </div>
             </div>
         </div>
@@ -140,87 +140,25 @@
     let markers = {};
     let currentInfoWindow = null;
     let safeZoneCircles = {};
-    let childNameForQR = ''; // משתנה גלובלי לשמירת שם הילד
 
-    // אתחול המפה
     function initMap() {
+        // Initialize the map
         map = new google.maps.Map(document.getElementById('map'), {
-            center: { lat: 32.0853, lng: 34.7818 },
-            zoom: 13
+            center: { lat: 31.0461, lng: 34.8516 }, // מרכז ישראל
+            zoom: 8
         });
     }
 
-    // פונקציה למיקוד המפה על ילד ספציפי
-    function focusOnChild(childId, lat, lng) {
-        const position = { lat: parseFloat(lat), lng: parseFloat(lng) };
-        
-        // מיקוד המפה
-        map.setCenter(position);
-        map.setZoom(16);
-
-        // יצירת Geocoder
-        const geocoder = new google.maps.Geocoder();
-        
-        // קבלת הכתובת
-        geocoder.geocode({ location: position }, (results, status) => {
-            const addressElement = document.getElementById(`address-${childId}`);
-            if (status === 'OK' && results[0]) {
-                addressElement.innerHTML = ` ${results[0].formatted_address}`;
-                
-                // עדכון InfoWindow
-                if (currentInfoWindow) {
-                    currentInfoWindow.close();
-                }
-                
-                const infoWindow = new google.maps.InfoWindow({
-                    content: `<div style="text-align: right;"><strong>${results[0].formatted_address}</strong></div>`
-                });
-                
-                if (markers[childId]) {
-                    infoWindow.open(map, markers[childId]);
-                    currentInfoWindow = infoWindow;
-                }
-            } else {
-                addressElement.innerHTML = 'לא ניתן לקבל כתובת';
+    // וודא שהמפה מאותחלת רק אחרי טעינת ה-API
+    if (typeof google !== 'undefined' && typeof google.maps !== 'undefined') {
+        initMap();
+    } else {
+        // אם ה-API עדיין לא נטען, נחכה לאירוע load
+        window.addEventListener('load', function() {
+            if (typeof google !== 'undefined' && typeof google.maps !== 'undefined') {
+                initMap();
             }
         });
-    }
-
-    // עדכון מיקומים
-    function updateLocations() {
-        fetch('/get_locations')
-            .then(response => response.json())
-            .then(data => {
-                data.forEach(location => {
-                    const locationCell = document.querySelector(`td[data-child-id="${location.child_id}"]`);
-                    if (locationCell) {
-                        locationCell.innerHTML = `
-                            ${location.latitude.toFixed(6)}, ${location.longitude.toFixed(6)}
-                            <button class="btn btn-sm btn-primary ms-2" onclick="focusOnChild(${location.child_id}, ${location.latitude}, ${location.longitude})">
-                                <i class="bi bi-geo-alt"></i> מקם במפה
-                            </button>
-                            <div id="address-${location.child_id}" class="small text-muted mt-1"></div>
-                        `;
-
-                        // עדכון או יצירת סמן במפה
-                        const position = { 
-                            lat: parseFloat(location.latitude), 
-                            lng: parseFloat(location.longitude) 
-                        };
-                        
-                        if (markers[location.child_id]) {
-                            markers[location.child_id].setPosition(position);
-                        } else {
-                            markers[location.child_id] = new google.maps.Marker({
-                                position: position,
-                                map: map,
-                                title: location.child_name
-                            });
-                        }
-                    }
-                });
-            })
-            .catch(error => console.error('Error:', error));
     }
 
     function updateChildrenList() {
@@ -270,13 +208,47 @@
     }
 
     // טיפול בטופס יצירת QR
-    document.getElementById('qrForm').addEventListener('submit', function(e) {
+    document.getElementById('qrForm').addEventListener('submit', async function(e) {
         e.preventDefault();
-        childNameForQR = document.getElementById('childName').value;
+        const childName = document.getElementById('childName').value;
         
-        // הצגת מודאל האישור
-        const modal = new bootstrap.Modal(document.getElementById('parentConfirmationModal'));
-        modal.show();
+        try {
+            // יצירת ילד חדש
+            const formData = new FormData();
+            formData.append('name', childName);
+            
+            const response = await fetch('/generate_qr', {
+                method: 'POST',
+                body: formData
+            });
+            
+            const data = await response.json();
+            
+            if (!response.ok) {
+                throw new Error(data.error || `HTTP error! status: ${response.status}`);
+            }
+            
+            if (data.success) {
+                // הצגת קוד ה-QR
+                const qrContainer = document.getElementById('qrContainer');
+                qrContainer.style.display = 'block';
+                qrContainer.innerHTML = `
+                    <div class="card-body text-center">
+                        <h5 class="card-title">קוד QR נוצר בהצלחה</h5>
+                        <img src="${data.qr_code_url}" alt="QR Code" class="img-fluid">
+                        <p class="mt-3">סרוק את הקוד QR כדי להתחיל במעקב</p>
+                    </div>
+                `;
+                
+                // רענון רשימת הילדים
+                updateChildrenList();
+            } else {
+                alert('שגיאה ביצירת קוד QR: ' + data.error);
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            alert('שגיאה ביצירת קוד QR: ' + error.message);
+        }
     });
 
     // טיפול בתיבת הסימון של אישור הורה
@@ -333,7 +305,6 @@
 
     // טעינה ראשונית
     document.addEventListener('DOMContentLoaded', function() {
-        initMap();
         updateChildrenList();
         updateNotifications();
         

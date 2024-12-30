@@ -1,69 +1,49 @@
-import random
-# Test update - checking GitHub sync
-import os
-import logging
-import random
-from datetime import datetime, timedelta
-from flask import Flask, render_template, request, redirect, url_for, flash, session
-from flask_login import LoginManager, UserMixin, login_user, login_required, current_user, logout_user
-from flask_sqlalchemy import SQLAlchemy
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session
+from flask_login import UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
+import os
 import qrcode
 import json
-import threading
-import time
-import schedule
-from config import Config
-import socket
 import hashlib
+import time
+from datetime import datetime, timedelta
+import logging
+import threading
+import schedule
+import socket
+import bcrypt
 from math import sin, cos, sqrt, atan2, radians
 from functools import wraps
 import re
-import subprocess
-import bcrypt
+from config import Config
+from extensions import db, login_manager
+from models import User, Child, SafeZone, Notification
 
 app = Flask(__name__)
 app.config.from_object(Config)
 
 # Database configuration
 if os.environ.get('VERCEL_ENV') == 'production':
-    DATABASE_URL = os.environ.get('DATABASE_URL', '').replace('postgres://', 'postgresql://')
-    app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
+    app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL')
 else:
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///tracker.db'
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-db = SQLAlchemy(app)
-login_manager = LoginManager()
-login_manager.init_app(app)
-login_manager.login_view = 'login'
-
-# הגדרת תיקיית ה-QR
-QR_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'qr_codes')
+# הגדרת תיקיית QR
+QR_FOLDER = os.path.join(app.static_folder, 'qr_codes')
 if not os.path.exists(QR_FOLDER):
     os.makedirs(QR_FOLDER)
 
-# הגדרת logging מפורט יותר
-if not os.path.exists('logs'):
-    os.makedirs('logs')
+# הגדרת logging
+logging.basicConfig(level=logging.DEBUG)
 
-file_handler = logging.FileHandler('logs/app.log')
-file_handler.setFormatter(logging.Formatter(
-    '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
-))
-file_handler.setLevel(logging.INFO)
-app.logger.addHandler(file_handler)
-app.logger.setLevel(logging.INFO)
-app.logger.info('Tracker startup')
+# אתחול הרחבות
+db.init_app(app)
+login_manager.init_app(app)
 
-# Setup logging
-# file_handler = logging.FileHandler('app.log')
-# file_handler.setLevel(logging.WARNING)
-# app.logger.addHandler(file_handler)
-
-# הגדרת משתנים גלובליים
-MAX_ATTEMPTS = 3
+# הגדרות אבטחה
+MAX_LOGIN_ATTEMPTS = 3
 LOCKOUT_TIME = 300  # 5 minutes in seconds
 login_attempts = {}
 
@@ -73,220 +53,201 @@ def check_login_attempts(f):
     def decorated_function(*args, **kwargs):
         ip = request.remote_addr
         if ip in login_attempts:
-            if login_attempts[ip]['attempts'] >= MAX_ATTEMPTS:
-                if datetime.now() < login_attempts[ip]['lockout_until']:
-                    remaining_time = (login_attempts[ip]['lockout_until'] - datetime.now()).seconds
-                    flash(f'החשבון נעול. נסה שוב בעוד {remaining_time} שניות', 'error')
-                    return redirect(url_for('login'))
-                else:
-                    login_attempts.pop(ip)
+            if login_attempts[ip]['attempts'] >= MAX_LOGIN_ATTEMPTS:
+                if time.time() - login_attempts[ip]['last_attempt'] < LOCKOUT_TIME:
+                    return jsonify({'error': 'חשבונך נחסם זמנית. נסה שוב מאוחר יותר.'}), 429
+                login_attempts[ip]['attempts'] = 0
         return f(*args, **kwargs)
     return decorated_function
 
-def clean_qr_files():
-    """מנקה את כל קבצי ה-QR מהתיקייה"""
-    try:
-        if not os.path.exists(QR_FOLDER):
-            os.makedirs(QR_FOLDER)
-            return
-
-        for filename in os.listdir(QR_FOLDER):
-            if filename.endswith('.png'):
-                file_path = os.path.join(QR_FOLDER, filename)
-                try:
-                    if os.path.exists(file_path):
-                        os.remove(file_path)
-                except Exception as e:
-                    app.logger.error(f"Error deleting QR file {file_path}: {str(e)}")
-        
-        app.logger.info(f"QR files cleanup completed at {datetime.now()}")
-    except Exception as e:
-        app.logger.error(f"Error during QR cleanup: {str(e)}")
-
-def run_schedule():
-    """מריץ את תזמון המשימות"""
+def start_scheduler():
+    """הפעלת תזמון משימות"""
     while True:
         try:
             schedule.run_pending()
-            time.sleep(60)
+            time.sleep(1)
         except Exception as e:
             app.logger.error(f"Error in scheduler: {str(e)}")
             time.sleep(60)
-
-class User(UserMixin, db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(80), unique=True, nullable=False)
-    password = db.Column(db.String(120), nullable=False)
-    children = db.relationship('Child', backref='user', lazy=True)
-
-class Child(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), nullable=False)
-    device_id = db.Column(db.String(32), unique=True, nullable=False)
-    parent_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    last_latitude = db.Column(db.Float, nullable=True)
-    last_longitude = db.Column(db.Float, nullable=True)
-    last_update = db.Column(db.DateTime, nullable=True)
-    safe_zones = db.relationship('SafeZone', backref='child_ref', lazy=True)
-    locations = db.relationship('Location', backref='child', lazy=True)
-
-class Location(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    latitude = db.Column(db.Float, nullable=False)
-    longitude = db.Column(db.Float, nullable=False)
-    timestamp = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    child_id = db.Column(db.Integer, db.ForeignKey('child.id'))
-
-class SafeZone(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), nullable=False)
-    address = db.Column(db.String(200), nullable=False)
-    latitude = db.Column(db.Float, nullable=False)
-    longitude = db.Column(db.Float, nullable=False)
-    radius = db.Column(db.Float, nullable=False)  # במטרים
-    child_id = db.Column(db.Integer, db.ForeignKey('child.id'), nullable=False)
-
-class Notification(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    child_id = db.Column(db.Integer, db.ForeignKey('child.id'), nullable=False)
-    message = db.Column(db.String(200), nullable=False)
-    timestamp = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    is_read = db.Column(db.Boolean, default=False)
 
 @login_manager.user_loader
 def load_user(user_id):
     return User.query.get(int(user_id))
 
+def calculate_distance(lat1, lon1, lat2, lon2):
+    """חישוב מרחק בין שתי נקודות על פני כדור הארץ"""
+    R = 6371.0  # רדיוס כדור הארץ בק"מ
+
+    lat1 = radians(lat1)
+    lon1 = radians(lon1)
+    lat2 = radians(lat2)
+    lon2 = radians(lon2)
+
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
+
+    a = sin(dlat / 2)**2 + cos(lat1) * cos(lat2) * sin(dlon / 2)**2
+    c = 2 * atan2(sqrt(a), sqrt(1 - a))
+
+    distance = R * c * 1000  # המרה למטרים
+    return distance
+
+def check_safe_zones():
+    """בדיקת מיקום הילדים ביחס לאזורים הבטוחים"""
+    try:
+        children = Child.query.all()
+        for child in children:
+            if child.last_latitude and child.last_longitude:
+                safe_zones = SafeZone.query.filter_by(child_id=child.id).all()
+                in_safe_zone = False
+                
+                for zone in safe_zones:
+                    distance = calculate_distance(
+                        child.last_latitude, child.last_longitude,
+                        zone.latitude, zone.longitude
+                    )
+                    
+                    if distance <= zone.radius:
+                        in_safe_zone = True
+                        break
+                
+                if not in_safe_zone:
+                    notification = Notification(
+                        child_id=child.id,
+                        parent_id=child.parent_id,
+                        message=f"{child.name} נמצא מחוץ לאזור הבטוח",
+                        timestamp=datetime.utcnow()
+                    )
+                    db.session.add(notification)
+                    db.session.commit()
+    except Exception as e:
+        app.logger.error(f"Error checking safe zones: {str(e)}")
+
+# הגדרת בדיקת אזורים בטוחים כל 5 דקות
+schedule.every(5).minutes.do(check_safe_zones)
+
+# התחלת thread לתזמון משימות
+scheduler_thread = threading.Thread(target=start_scheduler)
+scheduler_thread.daemon = True
+scheduler_thread.start()
+
 @app.route('/')
 def index():
     return render_template('index.html')
-
-@app.route('/register', methods=['GET', 'POST'])
-def register():
-    if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-        confirm_password = request.form['confirm_password']
-
-        if password != confirm_password:
-            flash('הסיסמאות אינן תואמות', 'error')
-            return redirect(url_for('register'))
-
-        # בדיקת חוזק סיסמה
-        if len(password) < 8:
-            flash('הסיסמה חייבת להכיל לפחות 8 תווים', 'error')
-            return redirect(url_for('register'))
-        
-        if not re.search(r"[A-Z]", password):
-            flash('הסיסמה חייבת להכיל לפחות אות גדולה אחת באנגלית', 'error')
-            return redirect(url_for('register'))
-        
-        if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", password):
-            flash('הסיסמה חייבת להכיל לפחות תו מיוחד אחד', 'error')
-            return redirect(url_for('register'))
-
-        if User.query.filter_by(username=username).first():
-            flash('שם משתמש כבר קיים', 'error')
-            return redirect(url_for('register'))
-        
-        hashed_password = generate_password_hash(password, method='pbkdf2:sha256', salt_length=8)
-        new_user = User(username=username, password=hashed_password)
-        db.session.add(new_user)
-        db.session.commit()
-        
-        flash('נרשמת בהצלחה!', 'success')
-        return redirect(url_for('login'))
-    
-    return render_template('register.html')
 
 @app.route('/login', methods=['GET', 'POST'])
 @check_login_attempts
 def login():
     if request.method == 'POST':
-        try:
-            username = request.form.get('username')
-            password = request.form.get('password')
-            captcha_response = request.form.get('captcha_response')
-
-            if not username or not password:
-                flash('נא למלא את כל השדות', 'error')
-                return redirect(url_for('login'))
-
+        username = request.form.get('username')
+        password = request.form.get('password')
+        remember = True if request.form.get('remember') else False
+        
+        user = User.query.filter_by(username=username).first()
+        
+        if not user or not check_password_hash(user.password, password):
             ip = request.remote_addr
-            
-            # בדיקת CAPTCHA רק אם יש ניסיונות כושלים
-            if ip in login_attempts and login_attempts[ip]['attempts'] > 0:
-                expected_captcha = session.get('captcha_answer')
-                if not captcha_response or int(captcha_response) != expected_captcha:
-                    if ip not in login_attempts:
-                        login_attempts[ip] = {'attempts': 1, 'lockout_until': None}
-                    else:
-                        login_attempts[ip]['attempts'] += 1
-
-                    if login_attempts[ip]['attempts'] >= MAX_ATTEMPTS:
-                        login_attempts[ip]['lockout_until'] = datetime.now() + timedelta(seconds=LOCKOUT_TIME)
-                        flash('יותר מדי ניסיונות כושלים. החשבון ננעל ל-5 דקות', 'error')
-                        return redirect(url_for('login'))
-
-                    flash('קוד האימות שגוי', 'error')
-                    return redirect(url_for('login'))
-
-            user = User.query.filter_by(username=username).first()
-            
-            if user and check_password_hash(user.password, password):
-                login_user(user)
-                if ip in login_attempts:
-                    del login_attempts[ip]
-                flash('התחברת בהצלחה!', 'success')
-                return redirect(url_for('dashboard'))
-
-            # ניסיון התחברות כושל
             if ip not in login_attempts:
-                login_attempts[ip] = {'attempts': 1, 'lockout_until': None}
-            else:
-                login_attempts[ip]['attempts'] += 1
-
-            if login_attempts[ip]['attempts'] >= MAX_ATTEMPTS:
-                login_attempts[ip]['lockout_until'] = datetime.now() + timedelta(seconds=LOCKOUT_TIME)
-                flash('יותר מדי ניסיונות כושלים. החשבון ננעל ל-5 דקות', 'error')
-            else:
-                flash('שם משתמש או סיסמה שגויים', 'error')
+                login_attempts[ip] = {'attempts': 0, 'last_attempt': time.time()}
+            login_attempts[ip]['attempts'] += 1
+            login_attempts[ip]['last_attempt'] = time.time()
             
+            flash('שם משתמש או סיסמה לא נכונים')
             return redirect(url_for('login'))
 
+        login_user(user, remember=remember)
+        return redirect(url_for('dashboard'))
+        
+    return render_template('login.html')
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        confirm_password = request.form.get('confirm_password')
+        email = request.form.get('email')
+        
+        # בדיקה שכל השדות מלאים
+        if not username or not password or not confirm_password or not email:
+            flash('כל השדות הם חובה')
+            return redirect(url_for('register'))
+        
+        # בדיקת תקינות שם משתמש
+        if not re.match("^[a-zA-Z0-9_-]{3,20}$", username):
+            flash('שם משתמש חייב להכיל בין 3 ל-20 תווים ויכול להכיל רק אותיות, מספרים, מקף ותחתון')
+            return redirect(url_for('register'))
+        
+        # בדיקת תקינות סיסמה
+        if len(password) < 8:
+            flash('הסיסמה חייבת להכיל לפחות 8 תווים')
+            return redirect(url_for('register'))
+        
+        # בדיקת התאמת סיסמאות
+        if password != confirm_password:
+            flash('הסיסמאות אינן תואמות')
+            return redirect(url_for('register'))
+        
+        # בדיקת תקינות אימייל
+        if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
+            flash('כתובת אימייל לא תקינה')
+            return redirect(url_for('register'))
+        
+        # בדיקה אם המשתמש כבר קיים
+        user = User.query.filter_by(username=username).first()
+        if user:
+            flash('שם משתמש כבר קיים')
+            return redirect(url_for('register'))
+        
+        # בדיקה אם האימייל כבר קיים
+        user = User.query.filter_by(email=email).first()
+        if user:
+            flash('כתובת האימייל כבר קיימת במערכת')
+            return redirect(url_for('register'))
+        
+        # יצירת משתמש חדש
+        new_user = User(username=username, email=email)
+        new_user.password = generate_password_hash(password)
+        
+        try:
+            db.session.add(new_user)
+            db.session.commit()
+            flash('נרשמת בהצלחה! אנא התחבר', 'success')
+            return redirect(url_for('login'))
         except Exception as e:
-            app.logger.error(f"Login error: {str(e)}")
-            flash('אירעה שגיאה בתהליך ההתחברות. נסה שוב', 'error')
-            return redirect(url_for('login'))
-
-    # יצירת CAPTCHA רק אם יש ניסיונות כושלים
-    ip = request.remote_addr
-    captcha_text = None
-    if ip in login_attempts and login_attempts[ip]['attempts'] > 0:
-        num1 = random.randint(1, 10)
-        num2 = random.randint(1, 10)
-        session['captcha_answer'] = num1 + num2
-        captcha_text = f"{num1} + {num2}"
-
-    return render_template('login.html', captcha_text=captcha_text)
+            db.session.rollback()
+            flash('אירעה שגיאה בעת ההרשמה. אנא נסה שוב')
+            return redirect(url_for('register'))
+    
+    return render_template('register.html')
 
 @app.route('/dashboard')
 @login_required
 def dashboard():
-    user_children = Child.query.filter_by(parent_id=current_user.id).all()
-    return render_template('dashboard.html', children=user_children)
+    return render_template('dashboard.html')
 
 @app.route('/generate_qr', methods=['POST'])
 @login_required
 def generate_qr():
     try:
-        child_id = request.form.get('child_id')
-        if not child_id:
-            return jsonify({'error': 'No child ID provided'}), 400
+        app.logger.debug("Starting QR code generation")
+        name = request.form.get('name')
+        if not name:
+            return jsonify({'success': False, 'error': 'שם הילד חסר'}), 400
 
-        # וודא שהתיקייה קיימת
-        if not os.path.exists(QR_FOLDER):
-            os.makedirs(QR_FOLDER)
+        # יצירת מזהה מכשיר חדש
+        device_id = hashlib.md5(f"{name}_{time.time()}".encode()).hexdigest()
+
+        # יצירת ילד חדש
+        child = Child(
+            name=name,
+            device_id=device_id,
+            parent_id=current_user.id
+        )
+        db.session.add(child)
+        db.session.commit()
+
+        app.logger.debug(f"Created new child with ID {child.id}")
 
         # יצירת ה-QR
         qr = qrcode.QRCode(
@@ -298,18 +259,25 @@ def generate_qr():
         
         # הוספת המידע ל-QR
         qr_data = {
-            'child_id': child_id,
-            'timestamp': str(datetime.now())
+            'child_id': child.id,
+            'device_id': device_id,
+            'timestamp': datetime.now().isoformat()
         }
-        qr.add_data(str(qr_data))
+        qr.add_data(json.dumps(qr_data))
         qr.make(fit=True)
 
         # יצירת התמונה
         qr_image = qr.make_image(fill_color="black", back_color="white")
         
-        # שמירת הקובץ עם שם ייחודי
-        filename = f"qr_{child_id}_{int(time.time())}.png"
+        # וודא שתיקיית QR קיימת
+        if not os.path.exists(QR_FOLDER):
+            os.makedirs(QR_FOLDER)
+        
+        # שמירת הקובץ
+        filename = f"qr_{device_id}.png"
         file_path = os.path.join(QR_FOLDER, filename)
+        
+        app.logger.debug(f"Saving QR code to {file_path}")
         qr_image.save(file_path)
 
         return jsonify({
@@ -319,237 +287,31 @@ def generate_qr():
 
     except Exception as e:
         app.logger.error(f"Error generating QR code: {str(e)}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/update_location', methods=['POST'])
-def update_location():
-    data = request.get_json()
-    device_id = data.get('device_id')
-    latitude = data.get('latitude')
-    longitude = data.get('longitude')
-    
-    if not all([device_id, latitude, longitude]):
-        return jsonify({'status': 'error', 'message': 'חסרים פרטים'}), 400
-    
-    try:
-        child = Child.query.filter_by(device_id=device_id).first()
-        if child:
-            # בדיקה אם המיקום החדש נמצא באזור בטוח
-            safe_zones = SafeZone.query.filter_by(child_id=child.id).all()
-            for zone in safe_zones:
-                if is_within_safe_zone(float(latitude), float(longitude), zone):
-                    # בדיקה אם כבר יש התראה לא נקראה עבור אותו אזור בטוח
-                    existing_notification = Notification.query\
-                        .filter_by(child_id=child.id, is_read=False)\
-                        .filter(Notification.message.like(f"%{zone.name}%"))\
-                        .first()
-                    
-                    if not existing_notification:
-                        # יצירת התראה חדשה רק אם אין התראה קיימת לא נקראה
-                        notification = Notification(
-                            child_id=child.id,
-                            message=f"{child.name} הגיע/ה לאזור בטוח: {zone.name}",
-                            timestamp=datetime.now()
-                        )
-                        db.session.add(notification)
-            
-            # עדכון מיקום הילד
-            child.last_latitude = float(latitude)
-            child.last_longitude = float(longitude)
-            child.last_update = datetime.now()
-            
-            # שמירת המיקום בהיסטוריה
-            location = Location(
-                latitude=float(latitude),
-                longitude=float(longitude),
-                child_id=child.id
-            )
-            db.session.add(location)
-            db.session.commit()
-            
-            return jsonify({'status': 'success'})
-        return jsonify({'status': 'error', 'message': 'מכשיר לא נמצא'}), 404
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
-@app.route('/add_safe_zone', methods=['POST'])
-@login_required
-def add_safe_zone():
-    try:
-        data = request.get_json()
-        child = Child.query.get(data['child_id'])
-        
-        if not child or child.parent_id != current_user.id:
-            return jsonify({'status': 'error', 'message': 'לא נמצא ילד או אין הרשאה'}), 404
-        
-        safe_zone = SafeZone(
-            name=data['name'],
-            address=data['address'],
-            latitude=data['latitude'],
-            longitude=data['longitude'],
-            radius=data['radius'],
-            child_id=child.id
-        )
-        
-        db.session.add(safe_zone)
-        db.session.commit()
-        
-        return jsonify({'status': 'success'})
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
-@app.route('/get_location/<child_id>')
-def get_location(child_id):
-    try:
-        child = Child.query.get(child_id)
-        if child and child.last_latitude and child.last_longitude:
-            return jsonify({
-                'status': 'success',
-                'latitude': child.last_latitude,
-                'longitude': child.last_longitude,
-                'timestamp': child.last_update.isoformat() if child.last_update else None
-            })
-        return jsonify({
-            'status': 'not_found',
-            'message': 'אין מיקום זמין'
-        }), 404
-    except Exception as e:
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
-
-@app.route('/device/<device_id>')
-def device_page(device_id):
-    child = Child.query.filter_by(device_id=device_id).first()
-    if child:
-        return render_template('device.html', child=child)
-    return "מכשיר לא נמצא", 404
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/get_children')
 @login_required
 def get_children():
     try:
-        children = []
-        for child in current_user.children:
-            children.append({
-                'id': child.id,
-                'name': child.name,
-                'device_id': child.device_id
-            })
-        return jsonify(children)
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
-@app.route('/delete_child/<child_id>', methods=['POST'])
-@login_required
-def delete_child(child_id):
-    try:
-        child = Child.query.get(child_id)
-        if child and child.parent_id == current_user.id:
-            # מחיקת קובץ ה-QR אם קיים
-            qr_file = os.path.join(app.static_folder, 'qr', f'qr_{child.device_id}.png')
-            if os.path.exists(qr_file):
-                os.remove(qr_file)
-            
-            # מחיקת האזורים הבטוחים של הילד
-            SafeZone.query.filter_by(child_id=child.id).delete()
-            
-            # מחיקת הילד
-            db.session.delete(child)
-            db.session.commit()
-            
-            return jsonify({'status': 'success'})
-        return jsonify({'status': 'error', 'message': 'לא נמצא ילד או אין הרשאה'}), 404
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
-@app.route('/get_safe_zones/<child_id>')
-@login_required
-def get_safe_zones(child_id):
-    try:
-        child = Child.query.get(child_id)
-        if child and child.parent_id == current_user.id:
-            safe_zones = []
-            for zone in child.safe_zones:
-                safe_zones.append({
-                    'id': zone.id,
-                    'name': zone.name,
-                    'address': zone.address,
-                    'latitude': zone.latitude,
-                    'longitude': zone.longitude,
-                    'radius': zone.radius
-                })
-            return jsonify({'status': 'success', 'safe_zones': safe_zones})
-        return jsonify({'status': 'error', 'message': 'לא נמצא ילד או אין הרשאה'}), 404
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
-@app.route('/get_notifications')
-@login_required
-def get_notifications():
-    try:
-        # מקבל את כל הילדים של ההורה הנוכחי
-        children_ids = [child.id for child in current_user.children]
-        
-        # מקבל את ההתראות הלא נקראות של הילדים
-        notifications = Notification.query\
-            .filter(Notification.child_id.in_(children_ids))\
-            .filter_by(is_read=False)\
-            .order_by(Notification.timestamp.desc())\
-            .all()
-        
+        children = Child.query.filter_by(parent_id=current_user.id).all()
         return jsonify([{
-            'id': n.id,
-            'message': n.message,
-            'timestamp': n.timestamp.isoformat()
-        } for n in notifications])
+            'id': child.id,
+            'name': child.name,
+            'device_id': child.device_id,
+            'last_latitude': child.last_latitude,
+            'last_longitude': child.last_longitude,
+            'last_update': child.last_update.isoformat() if child.last_update else None
+        } for child in children])
     except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
-@app.route('/mark_notification_read/<int:notification_id>', methods=['POST'])
-@login_required
-def mark_notification_read(notification_id):
-    try:
-        notification = Notification.query.get(notification_id)
-        if notification:
-            notification.is_read = True
-            db.session.commit()
-            return jsonify({'status': 'success'})
-        return jsonify({'status': 'error', 'message': 'התראה לא נמצאה'}), 404
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
-@app.route('/mark_all_notifications_read', methods=['POST'])
-@login_required
-def mark_all_notifications_read():
-    try:
-        # מציאת כל ההתראות הלא נקראות של המשתמש הנוכחי
-        user_children = Child.query.filter_by(parent_id=current_user.id).all()
-        child_ids = [child.id for child in user_children]
-        
-        unread_notifications = Notification.query\
-            .filter(Notification.child_id.in_(child_ids))\
-            .filter_by(is_read=False)\
-            .all()
-        
-        # סימון כל ההתראות כנקראות
-        for notification in unread_notifications:
-            notification.is_read = True
-        
-        db.session.commit()
-        return jsonify({'status': 'success'})
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        app.logger.error(f"Error getting children: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/get_locations')
 @login_required
 def get_locations():
     try:
-        # קבלת כל הילדים של המשתמש הנוכחי
         children = Child.query.filter_by(parent_id=current_user.id).all()
         locations = []
-        
         for child in children:
             if child.last_latitude and child.last_longitude:
                 locations.append({
@@ -559,59 +321,181 @@ def get_locations():
                     'longitude': child.last_longitude,
                     'last_update': child.last_update.isoformat() if child.last_update else None
                 })
-        
         return jsonify(locations)
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        app.logger.error(f"Error getting locations: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/get_notifications')
+@login_required
+def get_notifications():
+    try:
+        notifications = Notification.query.filter_by(parent_id=current_user.id).order_by(Notification.timestamp.desc()).all()
+        return jsonify([{
+            'id': notification.id,
+            'child_name': notification.child.name,
+            'message': notification.message,
+            'timestamp': notification.timestamp.isoformat()
+        } for notification in notifications])
+    except Exception as e:
+        app.logger.error(f"Error getting notifications: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/delete_notification/<int:notification_id>', methods=['DELETE'])
+@login_required
+def delete_notification(notification_id):
+    try:
+        notification = Notification.query.get_or_404(notification_id)
+        if notification.parent_id != current_user.id:
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+        
+        db.session.delete(notification)
+        db.session.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        app.logger.error(f"Error deleting notification: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/delete_child/<int:child_id>', methods=['DELETE'])
+@login_required
+def delete_child(child_id):
+    try:
+        child = Child.query.get_or_404(child_id)
+        if child.parent_id != current_user.id:
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+        
+        # מחיקת כל ההתראות של הילד
+        Notification.query.filter_by(child_id=child.id).delete()
+        
+        # מחיקת כל האזורים הבטוחים של הילד
+        SafeZone.query.filter_by(child_id=child.id).delete()
+        
+        # מחיקת הילד
+        db.session.delete(child)
+        db.session.commit()
+        
+        return jsonify({'success': True})
+    except Exception as e:
+        app.logger.error(f"Error deleting child: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/get_safe_zones/<int:child_id>')
+@login_required
+def get_safe_zones(child_id):
+    try:
+        child = Child.query.get_or_404(child_id)
+        if child.parent_id != current_user.id:
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+            
+        safe_zones = SafeZone.query.filter_by(child_id=child_id).all()
+        return jsonify([{
+            'id': zone.id,
+            'name': zone.name,
+            'latitude': zone.latitude,
+            'longitude': zone.longitude,
+            'radius': zone.radius
+        } for zone in safe_zones])
+    except Exception as e:
+        app.logger.error(f"Error getting safe zones: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/add_safe_zone', methods=['POST'])
+@login_required
+def add_safe_zone():
+    try:
+        data = request.get_json()
+        child_id = data.get('child_id')
+        name = data.get('name', 'אזור בטוח חדש')
+        latitude = data.get('latitude')
+        longitude = data.get('longitude')
+        radius = data.get('radius')
+
+        if not all([child_id, latitude, longitude, radius]):
+            return jsonify({'success': False, 'error': 'חסרים פרטים'}), 400
+
+        child = Child.query.get_or_404(child_id)
+        if child.parent_id != current_user.id:
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+        safe_zone = SafeZone(
+            name=name,
+            latitude=latitude,
+            longitude=longitude,
+            radius=radius,
+            child_id=child_id
+        )
+        
+        db.session.add(safe_zone)
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'safe_zone': {
+                'id': safe_zone.id,
+                'name': safe_zone.name,
+                'latitude': safe_zone.latitude,
+                'longitude': safe_zone.longitude,
+                'radius': safe_zone.radius
+            }
+        })
+    except Exception as e:
+        app.logger.error(f"Error adding safe zone: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/update_location', methods=['POST'])
+def update_location():
+    try:
+        data = request.get_json()
+        device_id = data.get('device_id')
+        latitude = data.get('latitude')
+        longitude = data.get('longitude')
+
+        if not all([device_id, latitude, longitude]):
+            return jsonify({'success': False, 'error': 'חסרים פרטים'}), 400
+
+        child = Child.query.filter_by(device_id=device_id).first()
+        if not child:
+            return jsonify({'success': False, 'error': 'מזהה מכשיר לא תקין'}), 404
+
+        child.last_latitude = latitude
+        child.last_longitude = longitude
+        child.last_update = datetime.utcnow()
+        
+        db.session.commit()
+
+        # בדיקת אזורים בטוחים
+        safe_zones = SafeZone.query.filter_by(child_id=child.id).all()
+        in_safe_zone = False
+        
+        for zone in safe_zones:
+            distance = calculate_distance(latitude, longitude, zone.latitude, zone.longitude)
+            if distance <= zone.radius:
+                in_safe_zone = True
+                break
+        
+        if not in_safe_zone and safe_zones:
+            notification = Notification(
+                child_id=child.id,
+                parent_id=child.parent_id,
+                message=f"{child.name} נמצא מחוץ לאזור הבטוח",
+                timestamp=datetime.utcnow()
+            )
+            db.session.add(notification)
+            db.session.commit()
+
+        return jsonify({'success': True})
+    except Exception as e:
+        app.logger.error(f"Error updating location: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/logout')
 @login_required
 def logout():
     logout_user()
+    flash('התנתקת בהצלחה', 'success')
     return redirect(url_for('index'))
 
-@app.context_processor
-def inject_config():
-    return dict(config=app.config)
-
-@app.errorhandler(500)
-def internal_error(error):
-    app.logger.error(f'Server Error: {error}')
-    db.session.rollback()
-    return render_template('error.html', error=error), 500
-
-@app.errorhandler(404)
-def not_found_error(error):
-    app.logger.error(f'Page not found: {error}')
-    return render_template('error.html', error=error), 404
-
-def is_within_safe_zone(latitude, longitude, safe_zone):
-    """Check if a location is within a safe zone using the Haversine formula"""
-    R = 6371000  # Earth's radius in meters
-    
-    lat1, lon1 = radians(latitude), radians(longitude)
-    lat2, lon2 = radians(safe_zone.latitude), radians(safe_zone.longitude)
-    
-    dlat = lat2 - lat1
-    dlon = lon2 - lon1
-    
-    a = sin(dlat / 2)**2 + cos(lat1) * cos(lat2) * sin(dlon / 2)**2
-    c = 2 * atan2(sqrt(a), sqrt(1 - a))
-    distance = R * c
-    
-    return distance <= safe_zone.radius
-
 if __name__ == '__main__':
-    # הגדרת המשימה לרוץ בחצות
-    schedule.every().day.at("00:00").do(clean_qr_files)
-    
-    # התחלת thread נפרד לתזמון
-    scheduler_thread = threading.Thread(target=run_schedule, daemon=True)
-    scheduler_thread.start()
-    
-    # יצירת טבלאות בבסיס הנתונים
     with app.app_context():
         db.create_all()
-        app.logger.info('Database tables created')
-
-    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 3000)))
+    app.run(host='0.0.0.0', port=8080, debug=True)

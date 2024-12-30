@@ -60,6 +60,7 @@
             overflow-y: auto;
         }
     </style>
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCnAvUZK7wRq-c_7z_xP1UmBXVTf7IEtc4&libraries=places,geocoding" async defer></script>
 </head>
 <body>
     <nav class="navbar navbar-expand-lg navbar-dark bg-primary fixed-top">
@@ -94,10 +95,10 @@
     </nav>
 
     <div class="container">
-        {% with messages = get_flashed_messages() %}
+        {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
-                {% for message in messages %}
-                    <div class="alert alert-info">{{ message }}</div>
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }}">{{ message }}</div>
                 {% endfor %}
             {% endif %}
         {% endwith %}
@@ -107,9 +108,6 @@
 
     <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.9.2/dist/umd/popper.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
-    {% if config.GOOGLE_MAPS_API_KEY %}
-    <script src="https://maps.googleapis.com/maps/api/js?key={{ config.GOOGLE_MAPS_API_KEY }}&libraries=places,geocoding&callback=initMap" async defer></script>
-    {% endif %}
     {% block scripts %}{% endblock %}
 </body>
 </html>
