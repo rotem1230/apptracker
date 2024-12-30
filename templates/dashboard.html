@@ -185,6 +185,10 @@ function focusOnChild(childId) {
     if (marker) {
         map.setCenter(marker.getPosition());
         map.setZoom(15);
+        // סגור את כל חלונות המידע האחרים
+        Object.values(infoWindows).forEach(window => window.close());
+        // פתח את חלון המידע של הילד הנבחר
+        infoWindows[childId].open(map, marker);
     }
 }
 
@@ -192,6 +196,7 @@ async function updateLocations() {
     try {
         const response = await fetch('/get_locations');  
         const children = await response.json();
+        let firstLocation = null;
         
         children.forEach(child => {
             if (child.latitude && child.longitude) {  
@@ -199,6 +204,13 @@ async function updateLocations() {
                     lat: parseFloat(child.latitude),
                     lng: parseFloat(child.longitude)
                 };
+
+                // שמור את המיקום הראשון שנמצא
+                if (!firstLocation) {
+                    firstLocation = position;
+                    // מרכז את המפה במיקום הראשון
+                    map.setCenter(position);
+                }
 
                 // עדכן או צור סמן חדש
                 if (markers[child.child_id]) {  
@@ -250,8 +262,11 @@ async function updateLocations() {
 }
 
 function initMap() {
+    // התחל עם מיקום ברירת מחדל של ישראל
+    const defaultLocation = { lat: 31.7683, lng: 35.2137 };
+    
     map = new google.maps.Map(document.getElementById('map'), {
-        center: { lat: 31.6746, lng: 34.5746 },  // מרכז אשקלון
+        center: defaultLocation,
         zoom: 13,
         mapTypeControl: true,
         streetViewControl: true,
