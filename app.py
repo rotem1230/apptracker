@@ -24,7 +24,8 @@ app.config.from_object(Config)
 
 # Database configuration
 if os.environ.get('VERCEL_ENV') == 'production':
-    app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///app.db')
+    db_path = os.path.join(os.getcwd(), 'app.db')
+    app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
 else:
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///app.db'
 
@@ -34,10 +35,18 @@ login_manager.init_app(app)
 # Create tables if needed
 with app.app_context():
     try:
+        # Ensure the directory exists
+        db_dir = os.path.dirname(app.config['SQLALCHEMY_DATABASE_URI'].replace('sqlite:///', ''))
+        if db_dir and not os.path.exists(db_dir):
+            os.makedirs(db_dir)
+        
         db.create_all()
         print("Tables created successfully!")
+        print(f"Database path: {app.config['SQLALCHEMY_DATABASE_URI']}")
     except Exception as e:
         print(f"Error creating tables: {str(e)}")
+        print(f"Current working directory: {os.getcwd()}")
+        print(f"Database URI: {app.config['SQLALCHEMY_DATABASE_URI']}")
 
 # הגדרת תיקיית QR
 QR_FOLDER = os.path.join(app.static_folder, 'qr_codes')
