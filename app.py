@@ -21,16 +21,20 @@ from models import User, Child, SafeZone, Notification
 
 app = Flask(__name__)
 app.config.from_object(Config)
-db.init_app(app)
-login_manager.init_app(app)
 
 # Database configuration
 if os.environ.get('VERCEL_ENV') == 'production':
-    app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL')
+    app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///app.db')
 else:
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///tracker.db'
+    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///app.db'
 
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+db.init_app(app)
+login_manager.init_app(app)
+
+# Create tables if needed
+with app.app_context():
+    if os.environ.get('CREATE_TABLES') == 'true':
+        db.create_all()
 
 # הגדרת תיקיית QR
 QR_FOLDER = os.path.join(app.static_folder, 'qr_codes')
@@ -494,6 +498,4 @@ def logout():
     return redirect(url_for('index'))
 
 if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()
     app.run(host='0.0.0.0', port=8080, debug=True)
