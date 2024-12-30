@@ -136,377 +136,398 @@
 
 {% block scripts %}
 <script>
-    let map;
-    let markers = {};
-    let currentInfoWindow = null;
-    let safeZoneCircles = {};
+let map;
+let markers = {};
+let circles = {};
 
-    function initMap() {
-        // Initialize the map
-        map = new google.maps.Map(document.getElementById('map'), {
-            center: { lat: 31.0461, lng: 34.8516 }, // מרכז ישראל
-            zoom: 8
-        });
-    }
-
-    // וודא שהמפה מאותחלת רק אחרי טעינת ה-API
-    if (typeof google !== 'undefined' && typeof google.maps !== 'undefined') {
-        initMap();
-    } else {
-        // אם ה-API עדיין לא נטען, נחכה לאירוע load
-        window.addEventListener('load', function() {
-            if (typeof google !== 'undefined' && typeof google.maps !== 'undefined') {
-                initMap();
-            }
-        });
-    }
-
-    function updateChildrenList() {
-        fetch('/get_children')
-            .then(response => response.json())
-            .then(data => {
-                const tbody = document.getElementById('childrenTableBody');
-                tbody.innerHTML = '';
-                
-                data.forEach(child => {
-                    const lastUpdate = child.last_update ? new Date(child.last_update).toLocaleString() : 'לא זמין';
-                    const row = document.createElement('tr');
-                    row.innerHTML = `
-                        <td>${child.name}</td>
-                        <td data-child-id="${child.id}">
-                            ${child.last_latitude && child.last_longitude ? 
-                                `${child.last_latitude.toFixed(6)}, ${child.last_longitude.toFixed(6)}
-                                <button class="btn btn-sm btn-primary ms-2" onclick="focusOnChild(${child.id}, ${child.last_latitude}, ${child.last_longitude})">
-                                    <i class="bi bi-geo-alt"></i> מקם במפה
-                                </button>
-                                <div id="address-${child.id}" class="small text-muted mt-1"></div>`
-                                : 'לא זמין'
-                            }
-                        </td>
-                        <td>${lastUpdate}</td>
-                        <td>
-                            <button class="btn btn-sm btn-success" onclick="addSafeZone(${child.id})">
-                                הוסף אזור
-                            </button>
-                            <button class="btn btn-sm btn-info" onclick="showSafeZones(${child.id})">
-                                הצג אזורים
-                            </button>
-                        </td>
-                        <td>
-                            <button class="btn btn-sm btn-danger" onclick="deleteChild(${child.id})">
-                                מחק
-                            </button>
-                        </td>
-                    `;
-                    tbody.appendChild(row);
-                });
-                
-                // עדכון ראשוני של המיקומים
-                updateLocations();
-            })
-            .catch(error => console.error('Error:', error));
-    }
-
-    // טיפול בטופס יצירת QR
-    document.getElementById('qrForm').addEventListener('submit', async function(e) {
-        e.preventDefault();
-        const childName = document.getElementById('childName').value;
-        
-        try {
-            // יצירת ילד חדש
-            const formData = new FormData();
-            formData.append('name', childName);
-            
-            const response = await fetch('/generate_qr', {
-                method: 'POST',
-                body: formData
-            });
-            
-            const data = await response.json();
-            
-            if (!response.ok) {
-                throw new Error(data.error || `HTTP error! status: ${response.status}`);
-            }
-            
-            if (data.success) {
-                // הצגת קוד ה-QR
-                const qrContainer = document.getElementById('qrContainer');
-                qrContainer.style.display = 'block';
-                qrContainer.innerHTML = `
-                    <div class="card-body text-center">
-                        <h5 class="card-title">קוד QR נוצר בהצלחה</h5>
-                        <img src="${data.qr_code_url}" alt="QR Code" class="img-fluid">
-                        <p class="mt-3">סרוק את הקוד QR כדי להתחיל במעקב</p>
-                    </div>
-                `;
-                
-                // רענון רשימת הילדים
-                updateChildrenList();
-            } else {
-                alert('שגיאה ביצירת קוד QR: ' + data.error);
-            }
-        } catch (error) {
-            console.error('Error:', error);
-            alert('שגיאה ביצירת קוד QR: ' + error.message);
-        }
+function initMap() {
+    // מיקום ברירת מחדל - ישראל
+    const defaultLocation = { lat: 31.7683, lng: 35.2137 };
+    
+    map = new google.maps.Map(document.getElementById('map'), {
+        zoom: 8,
+        center: defaultLocation,
     });
 
-    // טיפול בתיבת הסימון של אישור הורה
-    document.getElementById('parentConfirmation').addEventListener('change', function() {
-        document.getElementById('confirmParentButton').disabled = !this.checked;
-    });
+    // התחל לעדכן מיקומים
+    updateLocations();
+    // עדכן מיקומים כל 30 שניות
+    setInterval(updateLocations, 30000);
+}
 
-    // טיפול בכפתור האישור
-    document.getElementById('confirmParentButton').addEventListener('click', function() {
-        const modal = bootstrap.Modal.getInstance(document.getElementById('parentConfirmationModal'));
-        modal.hide();
+async function updateLocations() {
+    try {
+        const response = await fetch('/get_children_locations');
+        const children = await response.json();
         
-        fetch('/generate_qr', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ child_name: childNameForQR })
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.status === 'success') {
-                const qrContainer = document.getElementById('qrContainer');
-                qrContainer.style.display = 'block';
-                qrContainer.querySelector('.card-body div').innerHTML = `
-                    <h5 class="card-title">קוד QR עבור ${childNameForQR}</h5>
-                    <img src="${data.qr_code_url}" alt="QR Code" class="img-fluid mb-3" style="max-width: 200px;">
-                    <p class="mb-2">סרקו את הקוד QR להפעלת המעקב</p>
-                    <p class="text-muted">קישור ישיר:</p>
-                    <small class="text-break">${data.device_url}</small>
-                    <div class="mt-3">
-                        <button class="btn btn-primary" onclick="window.location.href='${data.device_url}'">
-                            הורד קוד QR
-                        </button>
-                    </div>
-                `;
-                
-                // איפוס הטופס
-                document.getElementById('childName').value = '';
-                document.getElementById('parentConfirmation').checked = false;
-                document.getElementById('confirmParentButton').disabled = true;
-                childNameForQR = '';
-                
-                updateChildrenList();
-            } else {
-                alert('שגיאה ביצירת קוד QR: ' + data.message);
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            alert('שגיאה ביצירת קוד QR');
-        });
-    });
+        children.forEach(child => {
+            if (child.last_latitude && child.last_longitude) {
+                const position = {
+                    lat: parseFloat(child.last_latitude),
+                    lng: parseFloat(child.last_longitude)
+                };
 
-    // טעינה ראשונית
-    document.addEventListener('DOMContentLoaded', function() {
-        updateChildrenList();
-        updateNotifications();
-        
-        // עדכון מיקומים כל 30 שניות
-        setInterval(updateLocations, 30000);
-        // עדכון התראות כל 30 שניות
-        setInterval(updateNotifications, 30000);
-    });
-
-    function addSafeZone(childId) {
-        document.getElementById('childIdForSafeZone').value = childId;
-        new bootstrap.Modal(document.getElementById('safeZoneModal')).show();
-    }
-
-    function saveSafeZone() {
-        const childId = document.getElementById('childIdForSafeZone').value;
-        const name = document.getElementById('zoneName').value;
-        const address = document.getElementById('zoneAddress').value;
-        const radius = document.getElementById('zoneRadius').value;
-        
-        // שימוש בשירות Geocoding של גוגל לקבלת קואורדינטות מהכתובת
-        const geocoder = new google.maps.Geocoder();
-        geocoder.geocode({ address: address }, function(results, status) {
-            if (status === 'OK') {
-                const location = results[0].geometry.location;
-                
-                fetch('/add_safe_zone', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        child_id: childId,
-                        name: name,
-                        address: address,
-                        latitude: location.lat(),
-                        longitude: location.lng(),
-                        radius: parseFloat(radius)
-                    })
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.status === 'success') {
-                        bootstrap.Modal.getInstance(document.getElementById('safeZoneModal')).hide();
-                        showSafeZones(childId);
-                    } else {
-                        alert('שגיאה: ' + data.message);
-                    }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    alert('שגיאה בשמירת האזור הבטוח');
-                });
-            } else {
-                alert('לא הצלחנו למצוא את הכתובת. אנא נסה שוב.');
-            }
-        });
-    }
-
-    function showSafeZones(childId) {
-        // ניקוי מעגלים קיימים
-        if (safeZoneCircles[childId]) {
-            safeZoneCircles[childId].forEach(circle => circle.setMap(null));
-        }
-        safeZoneCircles[childId] = [];
-        
-        fetch(`/get_safe_zones/${childId}`)
-        .then(response => response.json())
-        .then(data => {
-            if (data.status === 'success') {
-                data.safe_zones.forEach(zone => {
-                    const circle = new google.maps.Circle({
+                // עדכן או צור סמן חדש
+                if (markers[child.id]) {
+                    markers[child.id].setPosition(position);
+                } else {
+                    markers[child.id] = new google.maps.Marker({
+                        position: position,
                         map: map,
-                        center: { lat: zone.latitude, lng: zone.longitude },
-                        radius: zone.radius,
-                        fillColor: '#4CAF50',
-                        fillOpacity: 0.3,
-                        strokeColor: '#4CAF50',
-                        strokeWeight: 1
+                        title: child.name
                     });
-                    safeZoneCircles[childId].push(circle);
-                });
-                
-                // התמקדות במפה על האזור הבטוח הראשון
-                if (data.safe_zones.length > 0) {
-                    const firstZone = data.safe_zones[0];
-                    map.setCenter({ lat: firstZone.latitude, lng: firstZone.longitude });
                 }
-            } else {
-                alert('שגיאה: ' + data.message);
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            alert('שגיאה בטעינת האזורים הבטוחים');
-        });
-    }
 
-    function deleteChild(childId) {
-        if (confirm('האם אתה בטוח שברצונך למחוק ילד זה?')) {
-            fetch(`/delete_child/${childId}`, {
-                method: 'POST'
+                // הצג את אזורי הבטיחות
+                showSafeZones(child.id);
+            }
+        });
+
+        // עדכן את טבלת הילדים
+        updateChildrenList();
+    } catch (error) {
+        console.error('Error updating locations:', error);
+    }
+}
+
+function updateChildrenList() {
+    fetch('/get_children')
+        .then(response => response.json())
+        .then(data => {
+            const tbody = document.getElementById('childrenTableBody');
+            tbody.innerHTML = '';
+            
+            data.forEach(child => {
+                const lastUpdate = child.last_update ? new Date(child.last_update).toLocaleString() : 'לא זמין';
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${child.name}</td>
+                    <td data-child-id="${child.id}">
+                        ${child.last_latitude && child.last_longitude ? 
+                            `${child.last_latitude.toFixed(6)}, ${child.last_longitude.toFixed(6)}
+                            <button class="btn btn-sm btn-primary ms-2" onclick="focusOnChild(${child.id}, ${child.last_latitude}, ${child.last_longitude})">
+                                <i class="bi bi-geo-alt"></i> מקם במפה
+                            </button>
+                            <div id="address-${child.id}" class="small text-muted mt-1"></div>`
+                            : 'לא זמין'
+                        }
+                    </td>
+                    <td>${lastUpdate}</td>
+                    <td>
+                        <button class="btn btn-sm btn-success" onclick="addSafeZone(${child.id})">
+                            הוסף אזור
+                        </button>
+                        <button class="btn btn-sm btn-info" onclick="showSafeZones(${child.id})">
+                            הצג אזורים
+                        </button>
+                    </td>
+                    <td>
+                        <button class="btn btn-sm btn-danger" onclick="deleteChild(${child.id})">
+                            מחק
+                        </button>
+                    </td>
+                `;
+                tbody.appendChild(row);
+            });
+        })
+        .catch(error => console.error('Error:', error));
+}
+
+// טיפול בטופס יצירת QR
+document.getElementById('qrForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const childName = document.getElementById('childName').value;
+    
+    try {
+        // יצירת ילד חדש
+        const formData = new FormData();
+        formData.append('name', childName);
+        
+        const response = await fetch('/generate_qr', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const data = await response.json();
+        
+        if (!response.ok) {
+            throw new Error(data.error || `HTTP error! status: ${response.status}`);
+        }
+        
+        if (data.success) {
+            // הצגת קוד ה-QR
+            const qrContainer = document.getElementById('qrContainer');
+            qrContainer.style.display = 'block';
+            qrContainer.innerHTML = `
+                <div class="card-body text-center">
+                    <h5 class="card-title">קוד QR נוצר בהצלחה</h5>
+                    <img src="${data.qr_code_url}" alt="QR Code" class="img-fluid">
+                    <p class="mt-3">סרוק את הקוד QR כדי להתחיל במעקב</p>
+                </div>
+            `;
+            
+            // רענון רשימת הילדים
+            updateChildrenList();
+        } else {
+            alert('שגיאה ביצירת קוד QR: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        alert('שגיאה ביצירת קוד QR: ' + error.message);
+    }
+});
+
+// טיפול בתיבת הסימון של אישור הורה
+document.getElementById('parentConfirmation').addEventListener('change', function() {
+    document.getElementById('confirmParentButton').disabled = !this.checked;
+});
+
+// טיפול בכפתור האישור
+document.getElementById('confirmParentButton').addEventListener('click', function() {
+    const modal = bootstrap.Modal.getInstance(document.getElementById('parentConfirmationModal'));
+    modal.hide();
+    
+    fetch('/generate_qr', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ child_name: childNameForQR })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            const qrContainer = document.getElementById('qrContainer');
+            qrContainer.style.display = 'block';
+            qrContainer.querySelector('.card-body div').innerHTML = `
+                <h5 class="card-title">קוד QR עבור ${childNameForQR}</h5>
+                <img src="${data.qr_code_url}" alt="QR Code" class="img-fluid mb-3" style="max-width: 200px;">
+                <p class="mb-2">סרקו את הקוד QR להפעלת המעקב</p>
+                <p class="text-muted">קישור ישיר:</p>
+                <small class="text-break">${data.device_url}</small>
+                <div class="mt-3">
+                    <button class="btn btn-primary" onclick="window.location.href='${data.device_url}'">
+                        הורד קוד QR
+                    </button>
+                </div>
+            `;
+            
+            // איפוס הטופס
+            document.getElementById('childName').value = '';
+            document.getElementById('parentConfirmation').checked = false;
+            document.getElementById('confirmParentButton').disabled = true;
+            childNameForQR = '';
+            
+            updateChildrenList();
+        } else {
+            alert('שגיאה ביצירת קוד QR: ' + data.message);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('שגיאה ביצירת קוד QR');
+    });
+});
+
+// טעינה ראשונית
+document.addEventListener('DOMContentLoaded', function() {
+    updateChildrenList();
+    updateNotifications();
+});
+
+function addSafeZone(childId) {
+    document.getElementById('childIdForSafeZone').value = childId;
+    new bootstrap.Modal(document.getElementById('safeZoneModal')).show();
+}
+
+function saveSafeZone() {
+    const childId = document.getElementById('childIdForSafeZone').value;
+    const name = document.getElementById('zoneName').value;
+    const address = document.getElementById('zoneAddress').value;
+    const radius = document.getElementById('zoneRadius').value;
+    
+    // שימוש בשירות Geocoding של גוגל לקבלת קואורדינטות מהכתובת
+    const geocoder = new google.maps.Geocoder();
+    geocoder.geocode({ address: address }, function(results, status) {
+        if (status === 'OK') {
+            const location = results[0].geometry.location;
+            
+            fetch('/add_safe_zone', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    child_id: childId,
+                    name: name,
+                    address: address,
+                    latitude: location.lat(),
+                    longitude: location.lng(),
+                    radius: parseFloat(radius)
+                })
             })
             .then(response => response.json())
             .then(data => {
                 if (data.status === 'success') {
-                    // הסרת הסמן מהמפה
-                    if (markers[childId]) {
-                        markers[childId].setMap(null);
-                        delete markers[childId];
-                    }
-                    
-                    // הסרת האזורים הבטוחים מהמפה
-                    if (safeZoneCircles[childId]) {
-                        safeZoneCircles[childId].forEach(circle => circle.setMap(null));
-                        delete safeZoneCircles[childId];
-                    }
-                    
-                    updateChildrenList();
+                    bootstrap.Modal.getInstance(document.getElementById('safeZoneModal')).hide();
+                    showSafeZones(childId);
                 } else {
-                    alert('שגיאה במחיקת הילד: ' + data.message);
+                    alert('שגיאה: ' + data.message);
                 }
             })
             .catch(error => {
                 console.error('Error:', error);
-                alert('שגיאה במחיקת הילד');
+                alert('שגיאה בשמירת האזור הבטוח');
             });
+        } else {
+            alert('לא הצלחנו למצוא את הכתובת. אנא נסה שוב.');
         }
-    }
+    });
+}
 
-    // פונקציות להתראות
-    function updateNotifications() {
-        fetch('/get_notifications')
-            .then(response => response.json())
-            .then(data => {
-                const notificationsList = document.getElementById('notificationsList');
-                const unreadCount = document.getElementById('unreadCount');
+function showSafeZones(childId) {
+    // ניקוי מעגלים קיימים
+    if (circles[childId]) {
+        circles[childId].forEach(circle => circle.setMap(null));
+    }
+    circles[childId] = [];
+    
+    fetch(`/get_safe_zones/${childId}`)
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            data.safe_zones.forEach(zone => {
+                const circle = new google.maps.Circle({
+                    map: map,
+                    center: { lat: zone.latitude, lng: zone.longitude },
+                    radius: zone.radius,
+                    fillColor: '#4CAF50',
+                    fillOpacity: 0.3,
+                    strokeColor: '#4CAF50',
+                    strokeWeight: 1
+                });
+                circles[childId].push(circle);
+            });
+            
+            // התמקדות במפה על האזור הבטוח הראשון
+            if (data.safe_zones.length > 0) {
+                const firstZone = data.safe_zones[0];
+                map.setCenter({ lat: firstZone.latitude, lng: firstZone.longitude });
+            }
+        } else {
+            alert('שגיאה: ' + data.message);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('שגיאה בטעינת האזורים הבטוחים');
+    });
+}
+
+function deleteChild(childId) {
+    if (confirm('האם אתה בטוח שברצונך למחוק ילד זה?')) {
+        fetch(`/delete_child/${childId}`, {
+            method: 'POST'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                // הסרת הסמן מהמפה
+                if (markers[childId]) {
+                    markers[childId].setMap(null);
+                    delete markers[childId];
+                }
                 
-                // ניקוי הרשימה הקיימת
-                notificationsList.innerHTML = '';
+                // הסרת האזורים הבטוחים מהמפה
+                if (circles[childId]) {
+                    circles[childId].forEach(circle => circle.setMap(null));
+                    delete circles[childId];
+                }
                 
-                if (data.notifications && data.notifications.length > 0) {
-                    // הוספת ההתראות
-                    data.notifications.forEach(notification => {
-                        const notificationDiv = document.createElement('div');
-                        notificationDiv.className = `notification-item ${notification.is_read ? '' : 'unread'}`;
-                        notificationDiv.innerHTML = `
-                            <div class="d-flex justify-content-between align-items-center">
-                                <div>
-                                    ${notification.message}
-                                    <small class="text-muted d-block">${new Date(notification.timestamp).toLocaleString()}</small>
-                                </div>
-                                ${!notification.is_read ? `
-                                    <button class="btn btn-sm btn-link" onclick="markNotificationRead(${notification.id})">
-                                        <i class="bi bi-check2"></i>
-                                    </button>
-                                ` : ''}
+                updateChildrenList();
+            } else {
+                alert('שגיאה במחיקת הילד: ' + data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('שגיאה במחיקת הילד');
+        });
+    }
+}
+
+// פונקציות להתראות
+function updateNotifications() {
+    fetch('/get_notifications')
+        .then(response => response.json())
+        .then(data => {
+            const notificationsList = document.getElementById('notificationsList');
+            const unreadCount = document.getElementById('unreadCount');
+            
+            // ניקוי הרשימה הקיימת
+            notificationsList.innerHTML = '';
+            
+            if (data.notifications && data.notifications.length > 0) {
+                // הוספת ההתראות
+                data.notifications.forEach(notification => {
+                    const notificationDiv = document.createElement('div');
+                    notificationDiv.className = `notification-item ${notification.is_read ? '' : 'unread'}`;
+                    notificationDiv.innerHTML = `
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                ${notification.message}
+                                <small class="text-muted d-block">${new Date(notification.timestamp).toLocaleString()}</small>
                             </div>
-                        `;
-                        notificationsList.appendChild(notificationDiv);
-                    });
-                    
-                    // עדכון מספר ההתראות שלא נקראו
-                    const unreadNotifications = data.notifications.filter(n => !n.is_read);
-                    if (unreadNotifications.length > 0) {
-                        unreadCount.textContent = unreadNotifications.length;
-                        unreadCount.style.display = 'block';
-                    } else {
-                        unreadCount.style.display = 'none';
-                    }
+                            ${!notification.is_read ? `
+                                <button class="btn btn-sm btn-link" onclick="markNotificationRead(${notification.id})">
+                                    <i class="bi bi-check2"></i>
+                                </button>
+                            ` : ''}
+                        </div>
+                    `;
+                    notificationsList.appendChild(notificationDiv);
+                });
+                
+                // עדכון מספר ההתראות שלא נקראו
+                const unreadNotifications = data.notifications.filter(n => !n.is_read);
+                if (unreadNotifications.length > 0) {
+                    unreadCount.textContent = unreadNotifications.length;
+                    unreadCount.style.display = 'block';
                 } else {
-                    notificationsList.innerHTML = '<div class="p-3 text-center text-muted">אין התראות חדשות</div>';
                     unreadCount.style.display = 'none';
                 }
-            })
-            .catch(error => console.error('Error:', error));
-    }
-
-    function markNotificationRead(notificationId) {
-        fetch(`/mark_notification_read/${notificationId}`, {
-            method: 'POST'
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.status === 'success') {
-                updateNotifications();
+            } else {
+                notificationsList.innerHTML = '<div class="p-3 text-center text-muted">אין התראות חדשות</div>';
+                unreadCount.style.display = 'none';
             }
         })
         .catch(error => console.error('Error:', error));
-    }
+}
 
-    function markAllNotificationsAsRead() {
-        fetch('/mark_all_notifications_read', {
-            method: 'POST'
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.status === 'success') {
-                updateNotifications();
-            }
-        })
-        .catch(error => console.error('Error:', error));
-    }
+function markNotificationRead(notificationId) {
+    fetch(`/mark_notification_read/${notificationId}`, {
+        method: 'POST'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            updateNotifications();
+        }
+    })
+    .catch(error => console.error('Error:', error));
+}
+
+function markAllNotificationsAsRead() {
+    fetch('/mark_all_notifications_read', {
+        method: 'POST'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            updateNotifications();
+        }
+    })
+    .catch(error => console.error('Error:', error));
+}
 </script>
 {% endblock %}
