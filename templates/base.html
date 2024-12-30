@@ -121,7 +121,10 @@
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     {% if request.endpoint == 'dashboard' %}
     <!-- Google Maps API -->
-    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCnAvUZK7wRq-c_7z_xP1UmBXVTf7IEtc4&libraries=places,geocoding&callback=initMap" async defer></script>
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCnAvUZK7wRq-c_7z_xP1UmBXVTf7IEtc4&libraries=places,geocoding&callback=initMap" 
+            async 
+            defer
+            onerror="handleMapError()"></script>
     {% endif %}
     {% block scripts %}{% endblock %}
 </body>

@@ -2,6 +2,44 @@
 
 {% block title %}לוח בקרה{% endblock %}
 
+{% block head %}
+<script>
+// פונקציה שתיקרא כשה-API נטען
+function initMap() {
+    // מיקום ברירת מחדל - ישראל
+    const defaultLocation = { lat: 31.7683, lng: 35.2137 };
+    
+    map = new google.maps.Map(document.getElementById('map'), {
+        zoom: 8,
+        center: defaultLocation,
+        gestureHandling: 'greedy',
+        zoomControl: true,
+        mapTypeControl: true,
+        scaleControl: true,
+        streetViewControl: true,
+        rotateControl: true,
+        fullscreenControl: true
+    });
+
+    // התחל לעדכן מיקומים
+    updateLocations();
+    // עדכן מיקומים כל 30 שניות
+    setInterval(updateLocations, 30000);
+}
+
+// טיפול בשגיאות טעינת המפה
+function handleMapError() {
+    console.error('שגיאה בטעינת מפת Google');
+    document.getElementById('map').innerHTML = '<div class="alert alert-danger">שגיאה בטעינת המפה. אנא נסה שוב מאוחר יותר.</div>';
+}
+
+// בדיקה אם ה-API נטען
+window.gm_authFailure = function() {
+    handleMapError();
+};
+</script>
+{% endblock %}
+
 {% block content %}
 <div class="container">
     <h1 class="mb-4">לוח בקרה</h1>
@@ -147,6 +185,13 @@ function initMap() {
     map = new google.maps.Map(document.getElementById('map'), {
         zoom: 8,
         center: defaultLocation,
+        gestureHandling: 'greedy',
+        zoomControl: true,
+        mapTypeControl: true,
+        scaleControl: true,
+        streetViewControl: true,
+        rotateControl: true,
+        fullscreenControl: true
     });
 
     // התחל לעדכן מיקומים
