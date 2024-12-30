@@ -12,11 +12,12 @@ class User(UserMixin, db.Model):
 
 class Child(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(80), nullable=False)
-    device_id = db.Column(db.String(120), unique=True, nullable=False)
+    name = db.Column(db.String(100), nullable=False)
+    device_id = db.Column(db.String(100), unique=True, nullable=False)
     parent_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     last_latitude = db.Column(db.Float)
     last_longitude = db.Column(db.Float)
+    last_address = db.Column(db.String(200))
     last_update = db.Column(db.DateTime)
     safe_zones = db.relationship('SafeZone', backref='child', lazy=True)
     notifications = db.relationship('Notification', backref='child', lazy=True)

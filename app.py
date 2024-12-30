@@ -20,6 +20,7 @@ from config import Config
 from extensions import db, login_manager
 from models import User, Child, SafeZone, Notification
 from io import BytesIO
+import requests
 
 app = Flask(__name__)
 app.config.from_object(Config)
@@ -319,6 +320,7 @@ def get_children():
             'device_id': child.device_id,
             'last_latitude': child.last_latitude,
             'last_longitude': child.last_longitude,
+            'last_address': child.last_address,
             'last_update': child.last_update.isoformat() if child.last_update else None
         } for child in children])
     except Exception as e:
@@ -469,32 +471,49 @@ def add_safe_zone():
 def update_location():
     try:
         data = request.get_json()
-        child_id = data.get('child_id')
         device_id = data.get('device_id')
         latitude = data.get('latitude')
         longitude = data.get('longitude')
 
-        if not all([child_id, device_id, latitude, longitude]):
-            return jsonify({'success': False, 'message': 'חסרים פרטים'}), 400
+        if not all([device_id, latitude, longitude]):
+            return jsonify({'status': 'error', 'message': 'Missing required data'}), 400
 
-        # עדכון מיקום הילד
-        child = Child.query.get(child_id)
-        if child and child.device_id == device_id:
-            child.last_latitude = latitude
-            child.last_longitude = longitude
-            child.last_seen = datetime.now()
-            db.session.commit()
+        child = Child.query.filter_by(device_id=device_id).first()
+        if not child:
+            return jsonify({'status': 'error', 'message': 'Child not found'}), 404
 
-            # בדיקת אזורים בטוחים
-            check_safe_zones(child)
+        # Get address using Google Geocoding API
+        try:
+            geocoding_url = f"https://maps.googleapis.com/maps/api/geocode/json?latlng={latitude},{longitude}&key={app.config['GOOGLE_MAPS_API_KEY']}&language=iw"
+            response = requests.get(geocoding_url)
+            if response.status_code == 200:
+                result = response.json()
+                if result['results']:
+                    address = result['results'][0]['formatted_address']
+                else:
+                    address = "כתובת לא זמינה"
+            else:
+                address = "כתובת לא זמינה"
+        except Exception as e:
+            app.logger.error(f"Error getting address: {str(e)}")
+            address = "כתובת לא זמינה"
 
-            return jsonify({'success': True})
-        else:
-            return jsonify({'success': False, 'message': 'ילד לא נמצא או מזהה מכשיר שגוי'}), 404
+        # Update child's location and address
+        child.last_latitude = latitude
+        child.last_longitude = longitude
+        child.last_address = address
+        child.last_update = datetime.utcnow()
+        
+        db.session.commit()
+
+        # Check safe zones after location update
+        check_safe_zones(child)
+
+        return jsonify({'status': 'success'})
 
     except Exception as e:
         app.logger.error(f"Error updating location: {str(e)}")
-        return jsonify({'success': False, 'message': str(e)}), 500
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/logout')
 @login_required
