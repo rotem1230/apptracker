@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, send_file
 from flask_login import UserMixin, login_user, login_required, logout_user, current_user
+from flask_migrate import Migrate
 from werkzeug.security import generate_password_hash, check_password_hash
 import os
 import qrcode
@@ -31,6 +32,7 @@ else:
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///app.db'
 
 db.init_app(app)
+migrate = Migrate(app, db)
 login_manager.init_app(app)
 
 # Create tables if needed
@@ -408,6 +410,7 @@ def get_safe_zones(child_id):
         return jsonify([{
             'id': zone.id,
             'name': zone.name,
+            'address': zone.address,
             'latitude': zone.latitude,
             'longitude': zone.longitude,
             'radius': zone.radius
@@ -423,6 +426,7 @@ def add_safe_zone():
         data = request.get_json()
         child_id = data.get('child_id')
         name = data.get('name', 'אזור בטוח חדש')
+        address = data.get('address')
         latitude = data.get('latitude')
         longitude = data.get('longitude')
         radius = data.get('radius')
@@ -436,6 +440,7 @@ def add_safe_zone():
 
         safe_zone = SafeZone(
             name=name,
+            address=address,
             latitude=latitude,
             longitude=longitude,
             radius=radius,
@@ -450,6 +455,7 @@ def add_safe_zone():
             'safe_zone': {
                 'id': safe_zone.id,
                 'name': safe_zone.name,
+                'address': safe_zone.address,
                 'latitude': safe_zone.latitude,
                 'longitude': safe_zone.longitude,
                 'radius': safe_zone.radius

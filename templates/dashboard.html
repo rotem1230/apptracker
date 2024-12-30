@@ -444,42 +444,58 @@ function saveSafeZone() {
 }
 
 function showSafeZones(childId) {
-    // ניקוי מעגלים קיימים
-    if (circles[childId]) {
-        circles[childId].forEach(circle => circle.setMap(null));
-    }
-    circles[childId] = [];
-    
     fetch(`/get_safe_zones/${childId}`)
-    .then(response => response.json())
-    .then(data => {
-        if (data.status === 'success') {
-            data.safe_zones.forEach(zone => {
-                const circle = new google.maps.Circle({
-                    map: map,
-                    center: { lat: zone.latitude, lng: zone.longitude },
-                    radius: zone.radius,
-                    fillColor: '#4CAF50',
-                    fillOpacity: 0.3,
-                    strokeColor: '#4CAF50',
-                    strokeWeight: 1
-                });
-                circles[childId].push(circle);
-            });
-            
-            // התמקדות במפה על האזור הבטוח הראשון
-            if (data.safe_zones.length > 0) {
-                const firstZone = data.safe_zones[0];
-                map.setCenter({ lat: firstZone.latitude, lng: firstZone.longitude });
+        .then(response => response.json())
+        .then(zones => {
+            // נקה מפה קודמת
+            for (let circle of Object.values(circles)) {
+                circle.setMap(null);
             }
-        } else {
-            alert('שגיאה: ' + data.message);
-        }
-    })
-    .catch(error => {
-        console.error('Error:', error);
-        alert('שגיאה בטעינת האזורים הבטוחים');
-    });
+            circles = {};
+
+            // הוסף אזורים חדשים
+            zones.forEach(zone => {
+                const circle = new google.maps.Circle({
+                    strokeColor: '#FF0000',
+                    strokeOpacity: 0.8,
+                    strokeWeight: 2,
+                    fillColor: '#FF0000',
+                    fillOpacity: 0.35,
+                    map,
+                    center: { lat: zone.latitude, lng: zone.longitude },
+                    radius: zone.radius
+                });
+
+                // הוסף InfoWindow
+                const infoWindow = new google.maps.InfoWindow({
+                    content: `
+                        <div>
+                            <h6>${zone.name}</h6>
+                            <p>כתובת: ${zone.address || 'לא זמין'}</p>
+                            <p>רדיוס: ${zone.radius} מטרים</p>
+                        </div>
+                    `
+                });
+
+                // הוסף מאזין לחיצה למעגל
+                circle.addListener('click', () => {
+                    infoWindow.setPosition({ lat: zone.latitude, lng: zone.longitude });
+                    infoWindow.open(map);
+                });
+
+                circles[zone.id] = circle;
+            });
+
+            // התמקד באזור הראשון אם קיים
+            if (zones.length > 0) {
+                map.setCenter({ lat: zones[0].latitude, lng: zones[0].longitude });
+                map.setZoom(15);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('שגיאה בטעינת אזורים בטוחים');
+        });
 }
 
 function deleteChild(childId) {

@@ -24,6 +24,7 @@ class Child(db.Model):
 class SafeZone(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(80))
+    address = db.Column(db.String(200))
     latitude = db.Column(db.Float, nullable=False)
     longitude = db.Column(db.Float, nullable=False)
     radius = db.Column(db.Float, nullable=False)  # radius in meters
