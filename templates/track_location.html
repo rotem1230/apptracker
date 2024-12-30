@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+
+{% block title %}מעקב מיקום{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h1 class="text-center mb-4">מעקב מיקום</h1>
+    
+    <div class="card">
+        <div class="card-body text-center">
+            <h5 class="card-title mb-4">מצב מעקב מיקום</h5>
+            <div id="status" class="alert alert-info">ממתין להפעלת מיקום...</div>
+            <button id="startTracking" class="btn btn-primary btn-lg mb-3">הפעל מעקב מיקום</button>
+            <div id="coordinates" class="mt-3"></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let isTracking = false;
+let watchId = null;
+const child_id = {{ child_id }};
+const device_id = "{{ device_id }}";
+
+document.getElementById('startTracking').addEventListener('click', function() {
+    if (!isTracking) {
+        startTracking();
+    } else {
+        stopTracking();
+    }
+});
+
+function startTracking() {
+    if ("geolocation" in navigator) {
+        const button = document.getElementById('startTracking');
+        const status = document.getElementById('status');
+        
+        try {
+            watchId = navigator.geolocation.watchPosition(
+                function(position) {
+                    isTracking = true;
+                    button.textContent = 'הפסק מעקב מיקום';
+                    button.classList.replace('btn-primary', 'btn-danger');
+                    status.textContent = 'מעקב מיקום פעיל';
+                    status.classList.replace('alert-info', 'alert-success');
+                    
+                    // שליחת המיקום לשרת
+                    sendLocation(position.coords.latitude, position.coords.longitude);
+                    
+                    // הצגת הקואורדינטות
+                    document.getElementById('coordinates').innerHTML = 
+                        `קו רוחב: ${position.coords.latitude}<br>קו אורך: ${position.coords.longitude}`;
+                },
+                function(error) {
+                    console.error("שגיאה בקבלת מיקום:", error);
+                    status.textContent = 'שגיאה בקבלת מיקום: ' + getErrorMessage(error);
+                    status.classList.replace('alert-info', 'alert-danger');
+                },
+                {
+                    enableHighAccuracy: true,
+                    maximumAge: 0,
+                    timeout: 5000
+                }
+            );
+        } catch (e) {
+            console.error("שגיאה בהפעלת מעקב:", e);
+            status.textContent = 'שגיאה בהפעלת מעקב מיקום';
+            status.classList.replace('alert-info', 'alert-danger');
+        }
+    } else {
+        alert("הדפדפן שלך לא תומך במעקב מיקום");
+    }
+}
+
+function stopTracking() {
+    if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+    }
+    
+    isTracking = false;
+    const button = document.getElementById('startTracking');
+    const status = document.getElementById('status');
+    
+    button.textContent = 'הפעל מעקב מיקום';
+    button.classList.replace('btn-danger', 'btn-primary');
+    status.textContent = 'מעקב מיקום מושבת';
+    status.classList.replace('alert-success', 'alert-warning');
+    document.getElementById('coordinates').innerHTML = '';
+}
+
+function sendLocation(latitude, longitude) {
+    fetch('/update_location', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            child_id: child_id,
+            device_id: device_id,
+            latitude: latitude,
+            longitude: longitude
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (!data.success) {
+            console.error('שגיאה בשליחת מיקום:', data.message);
+        }
+    })
+    .catch(error => {
+        console.error('שגיאה בשליחת מיקום:', error);
+    });
+}
+
+function getErrorMessage(error) {
+    switch(error.code) {
+        case error.PERMISSION_DENIED:
+            return "המשתמש לא אישר גישה למיקום";
+        case error.POSITION_UNAVAILABLE:
+            return "מידע המיקום אינו זמין";
+        case error.TIMEOUT:
+            return "בקשת המיקום נכשלה בגלל timeout";
+        default:
+            return "שגיאה לא ידועה";
+    }
+}
+</script>
+{% endblock %}

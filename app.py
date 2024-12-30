@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, send_file
 from flask_login import UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 import os
@@ -18,6 +18,7 @@ import re
 from config import Config
 from extensions import db, login_manager
 from models import User, Child, SafeZone, Notification
+from io import BytesIO
 
 app = Flask(__name__)
 app.config.from_object(Config)
@@ -76,13 +77,13 @@ def check_login_attempts(f):
 
 def start_scheduler():
     """הפעלת תזמון משימות"""
-    while True:
-        try:
+    def run_scheduler():
+        while True:
             schedule.run_pending()
-            time.sleep(1)
-        except Exception as e:
-            app.logger.error(f"Error in scheduler: {str(e)}")
             time.sleep(60)
+
+    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+    scheduler_thread.start()
 
 @login_manager.user_loader
 def load_user(user_id):
@@ -106,44 +107,49 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     distance = R * c * 1000  # המרה למטרים
     return distance
 
-def check_safe_zones():
-    """בדיקת מיקום הילדים ביחס לאזורים הבטוחים"""
+def check_safe_zones(child):
+    """בדיקת מיקום הילד ביחס לאזורים הבטוחים"""
+    try:
+        safe_zones = SafeZone.query.filter_by(child_id=child.id).all()
+        in_safe_zone = False
+        
+        for zone in safe_zones:
+            distance = calculate_distance(
+                child.last_latitude, child.last_longitude,
+                zone.latitude, zone.longitude
+            )
+            
+            if distance <= zone.radius:
+                in_safe_zone = True
+                break
+        
+        if not in_safe_zone:
+            notification = Notification(
+                child_id=child.id,
+                parent_id=child.parent_id,
+                message=f"{child.name} נמצא מחוץ לאזור הבטוח",
+                timestamp=datetime.utcnow()
+            )
+            db.session.add(notification)
+            db.session.commit()
+    except Exception as e:
+        app.logger.error(f"Error checking safe zones: {str(e)}")
+
+def check_safe_zones_all():
+    """בדיקת מיקום כל הילדים ביחס לאזורים הבטוחים"""
     try:
         children = Child.query.all()
         for child in children:
             if child.last_latitude and child.last_longitude:
-                safe_zones = SafeZone.query.filter_by(child_id=child.id).all()
-                in_safe_zone = False
-                
-                for zone in safe_zones:
-                    distance = calculate_distance(
-                        child.last_latitude, child.last_longitude,
-                        zone.latitude, zone.longitude
-                    )
-                    
-                    if distance <= zone.radius:
-                        in_safe_zone = True
-                        break
-                
-                if not in_safe_zone:
-                    notification = Notification(
-                        child_id=child.id,
-                        parent_id=child.parent_id,
-                        message=f"{child.name} נמצא מחוץ לאזור הבטוח",
-                        timestamp=datetime.utcnow()
-                    )
-                    db.session.add(notification)
-                    db.session.commit()
+                check_safe_zones(child)
     except Exception as e:
-        app.logger.error(f"Error checking safe zones: {str(e)}")
+        app.logger.error(f"Error checking all safe zones: {str(e)}")
 
 # הגדרת בדיקת אזורים בטוחים כל 5 דקות
-schedule.every(5).minutes.do(check_safe_zones)
+schedule.every(5).minutes.do(check_safe_zones_all)
 
 # התחלת thread לתזמון משימות
-scheduler_thread = threading.Thread(target=start_scheduler)
-scheduler_thread.daemon = True
-scheduler_thread.start()
+start_scheduler()
 
 @app.route('/')
 def index():
@@ -242,7 +248,7 @@ def dashboard():
 
 @app.route('/generate_qr', methods=['POST'])
 @login_required
-def generate_qr():
+def generate_qr_new():
     try:
         app.logger.debug("Starting QR code generation")
         name = request.form.get('name')
@@ -263,6 +269,9 @@ def generate_qr():
 
         app.logger.debug(f"Created new child with ID {child.id}")
 
+        # יצירת ה-URL המלא לדף המעקב
+        track_url = url_for('track_location', child_id=child.id, device_id=device_id, _external=True)
+        
         # יצירת ה-QR
         qr = qrcode.QRCode(
             version=1,
@@ -271,25 +280,19 @@ def generate_qr():
             border=4,
         )
         
-        # הוספת המידע ל-QR
-        qr_data = {
-            'child_id': child.id,
-            'device_id': device_id,
-            'timestamp': datetime.now().isoformat()
-        }
-        qr.add_data(json.dumps(qr_data))
+        qr.add_data(track_url)
         qr.make(fit=True)
 
         # יצירת התמונה
         qr_image = qr.make_image(fill_color="black", back_color="white")
         
         # וודא שתיקיית QR קיימת
-        if not os.path.exists(QR_FOLDER):
-            os.makedirs(QR_FOLDER)
+        if not os.path.exists('static/qr_codes'):
+            os.makedirs('static/qr_codes')
         
         # שמירת הקובץ
         filename = f"qr_{device_id}.png"
-        file_path = os.path.join(QR_FOLDER, filename)
+        file_path = os.path.join('static/qr_codes', filename)
         
         app.logger.debug(f"Saving QR code to {file_path}")
         qr_image.save(file_path)
@@ -460,47 +463,32 @@ def add_safe_zone():
 def update_location():
     try:
         data = request.get_json()
+        child_id = data.get('child_id')
         device_id = data.get('device_id')
         latitude = data.get('latitude')
         longitude = data.get('longitude')
 
-        if not all([device_id, latitude, longitude]):
-            return jsonify({'success': False, 'error': 'חסרים פרטים'}), 400
+        if not all([child_id, device_id, latitude, longitude]):
+            return jsonify({'success': False, 'message': 'חסרים פרטים'}), 400
 
-        child = Child.query.filter_by(device_id=device_id).first()
-        if not child:
-            return jsonify({'success': False, 'error': 'מזהה מכשיר לא תקין'}), 404
-
-        child.last_latitude = latitude
-        child.last_longitude = longitude
-        child.last_update = datetime.utcnow()
-        
-        db.session.commit()
-
-        # בדיקת אזורים בטוחים
-        safe_zones = SafeZone.query.filter_by(child_id=child.id).all()
-        in_safe_zone = False
-        
-        for zone in safe_zones:
-            distance = calculate_distance(latitude, longitude, zone.latitude, zone.longitude)
-            if distance <= zone.radius:
-                in_safe_zone = True
-                break
-        
-        if not in_safe_zone and safe_zones:
-            notification = Notification(
-                child_id=child.id,
-                parent_id=child.parent_id,
-                message=f"{child.name} נמצא מחוץ לאזור הבטוח",
-                timestamp=datetime.utcnow()
-            )
-            db.session.add(notification)
+        # עדכון מיקום הילד
+        child = Child.query.get(child_id)
+        if child and child.device_id == device_id:
+            child.last_latitude = latitude
+            child.last_longitude = longitude
+            child.last_seen = datetime.now()
             db.session.commit()
 
-        return jsonify({'success': True})
+            # בדיקת אזורים בטוחים
+            check_safe_zones(child)
+
+            return jsonify({'success': True})
+        else:
+            return jsonify({'success': False, 'message': 'ילד לא נמצא או מזהה מכשיר שגוי'}), 404
+
     except Exception as e:
         app.logger.error(f"Error updating location: {str(e)}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/logout')
 @login_required
@@ -508,6 +496,10 @@ def logout():
     logout_user()
     flash('התנתקת בהצלחה', 'success')
     return redirect(url_for('index'))
+
+@app.route('/track/<int:child_id>/<device_id>')
+def track_location(child_id, device_id):
+    return render_template('track_location.html', child_id=child_id, device_id=device_id)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080, debug=True)
