@@ -34,8 +34,9 @@ class SafeZone(db.Model):
 
 class Notification(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    message = db.Column(db.String(200), nullable=False)
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
     child_id = db.Column(db.Integer, db.ForeignKey('child.id'), nullable=False)
-    parent_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    safe_zone_id = db.Column(db.Integer, db.ForeignKey('safe_zone.id'), nullable=False)
+    message = db.Column(db.String(200), nullable=False)
+    timestamp = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     is_read = db.Column(db.Boolean, default=False)
+    is_inside = db.Column(db.Boolean, nullable=False)  # True אם הילד נכנס לאזור, False אם יצא

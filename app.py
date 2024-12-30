@@ -114,27 +114,53 @@ def check_safe_zones(child):
     """בדיקת מיקום הילד ביחס לאזורים הבטוחים"""
     try:
         safe_zones = SafeZone.query.filter_by(child_id=child.id).all()
-        in_safe_zone = False
+        child_location = (child.last_latitude, child.last_longitude)
         
         for zone in safe_zones:
+            zone_location = (zone.latitude, zone.longitude)
             distance = calculate_distance(
-                child.last_latitude, child.last_longitude,
-                zone.latitude, zone.longitude
+                child_location[0], child_location[1],
+                zone_location[0], zone_location[1]
             )
             
-            if distance <= zone.radius:
-                in_safe_zone = True
-                break
-        
-        if not in_safe_zone:
-            notification = Notification(
+            # בדיקה אם הילד נמצא בתוך האזור הבטוח
+            is_inside = distance <= zone.radius
+
+            # בדיקה אם יש שינוי במצב (נכנס או יצא מהאזור)
+            last_notification = Notification.query.filter_by(
                 child_id=child.id,
-                parent_id=child.parent_id,
-                message=f"{child.name} נמצא מחוץ לאזור הבטוח",
-                timestamp=datetime.utcnow()
-            )
-            db.session.add(notification)
+                safe_zone_id=zone.id
+            ).order_by(Notification.timestamp.desc()).first()
+
+            current_time = datetime.utcnow()
+
+            if is_inside:
+                # אם הילד נמצא באזור בטוח
+                if not last_notification or not last_notification.is_inside:
+                    # יצירת התראה חדשה - כניסה לאזור בטוח
+                    notification = Notification(
+                        child_id=child.id,
+                        safe_zone_id=zone.id,
+                        message=f"{child.name} הגיע לאזור הבטוח: {zone.name}",
+                        timestamp=current_time,
+                        is_inside=True
+                    )
+                    db.session.add(notification)
+            else:
+                # אם הילד מחוץ לאזור בטוח
+                if last_notification and last_notification.is_inside:
+                    # יצירת התראה חדשה - יציאה מאזור בטוח
+                    notification = Notification(
+                        child_id=child.id,
+                        safe_zone_id=zone.id,
+                        message=f"{child.name} יצא מהאזור הבטוח: {zone.name}",
+                        timestamp=current_time,
+                        is_inside=False
+                    )
+                    db.session.add(notification)
+            
             db.session.commit()
+
     except Exception as e:
         app.logger.error(f"Error checking safe zones: {str(e)}")
 
@@ -153,6 +179,15 @@ schedule.every(5).minutes.do(check_safe_zones_all)
 
 # התחלת thread לתזמון משימות
 start_scheduler()
+
+@app.before_first_request
+def init_db():
+    try:
+        # מחיקת כל ההתראות הקיימות
+        Notification.query.delete()
+        db.session.commit()
+    except Exception as e:
+        app.logger.error(f"Error initializing database: {str(e)}")
 
 @app.route('/')
 def index():
