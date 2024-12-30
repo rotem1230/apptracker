@@ -21,6 +21,8 @@ from models import User, Child, SafeZone, Notification
 
 app = Flask(__name__)
 app.config.from_object(Config)
+db.init_app(app)
+login_manager.init_app(app)
 
 # Database configuration
 if os.environ.get('VERCEL_ENV') == 'production':
@@ -37,10 +39,6 @@ if not os.path.exists(QR_FOLDER):
 
 # הגדרת logging
 logging.basicConfig(level=logging.DEBUG)
-
-# אתחול הרחבות
-db.init_app(app)
-login_manager.init_app(app)
 
 # הגדרות אבטחה
 MAX_LOGIN_ATTEMPTS = 3
